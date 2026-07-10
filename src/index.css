@@ -1,0 +1,85 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-gray-200/50;
+  }
+
+  body {
+    @apply bg-cream-50 text-gray-800 antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-blush-400 ring-offset-2;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-white/70 backdrop-blur-xl border border-white/50 shadow-glass;
+  }
+
+  .glass-card {
+    @apply bg-white/80 backdrop-blur-lg border border-white/60 shadow-soft rounded-2xl;
+  }
+
+  .glass-button {
+    @apply bg-white/90 backdrop-blur-sm border border-white/80 hover:bg-white hover:shadow-soft transition-all duration-200;
+  }
+
+  .gradient-blush {
+    @apply bg-gradient-to-r from-blush-100 via-lavender-100 to-blush-100;
+  }
+
+  .gradient-premium {
+    background: linear-gradient(135deg, #fff5f7 0%, #faf5ff 50%, #fff5f7 100%);
+  }
+
+  .btn-primary {
+    @apply px-6 py-3 bg-gradient-to-r from-blush-400 to-blush-500 text-white rounded-xl font-medium shadow-soft hover:shadow-glow hover:from-blush-500 hover:to-blush-600 transition-all duration-200 active:scale-[0.98];
+  }
+
+  .btn-secondary {
+    @apply px-6 py-3 bg-white text-gray-700 rounded-xl font-medium shadow-soft border border-gray-100 hover:shadow-md hover:border-blush-200 transition-all duration-200 active:scale-[0.98];
+  }
+
+  .btn-ghost {
+    @apply px-4 py-2 text-gray-600 hover:text-blush-600 hover:bg-blush-50 rounded-lg transition-all duration-200;
+  }
+
+  .input-base {
+    @apply w-full px-4 py-3 bg-white/80 border border-gray-200 rounded-xl text-gray-800 placeholder:text-gray-400 focus:outline-none focus:border-blush-400 focus:ring-2 focus:ring-blush-400/20 transition-all duration-200;
+  }
+
+  .card-hover {
+    @apply hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 cursor-pointer;
+  }
+
+  .sidebar-item {
+    @apply flex items-center gap-3 px-4 py-3 rounded-xl text-gray-600 hover:bg-blush-50 hover:text-blush-600 transition-all duration-200;
+  }
+
+  .sidebar-item-active {
+    @apply flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-blush-100 to-lavender-100 text-blush-700 font-medium;
+  }
+}
+
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-blush-500 via-lavender-500 to-blush-500;
+  }
+}
