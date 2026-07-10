@@ -26,7 +26,8 @@ export interface AuthTokens {
 
 export interface LoginResponse {
   user: import('./index').User;
-  tokens: AuthTokens;
+  accessToken: string;
+  refreshToken: string;
 }
 
 export interface ApiResponseRequestConfig {

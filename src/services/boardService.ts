@@ -1,151 +1,86 @@
-import type { Board, CreateBoardDto, UpdateBoardDto } from '@/types';
-import type { ApiResponse } from '@/types/api';
+import type { Board, CreateBoardDto, UpdateBoardDto, BoardMember } from '@/types';
 import { apiService } from './base';
-import { sleep } from '@/utils';
 
-// Mock board data
-let MOCK_BOARDS: Board[] = [
-  {
-    id: 'board-1',
-    title: 'Product Roadmap Q1',
-    description: 'Planning and milestones for Q1 2024',
-    thumbnail: 'https://images.unsplash.com/photo-1531403009284-440f080d1e12?w=400&h=300&fit=crop',
-    ownerId: 'user-1',
-    collaborators: [
-      {
-        userId: 'user-2',
-        user: {
-          id: 'user-2',
-          email: 'bob@example.com',
-          name: 'Bob Smith',
-          avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop',
-          createdAt: '2024-01-16T10:00:00Z',
-          updatedAt: '2024-01-16T10:00:00Z',
-        },
-        permission: 'edit',
-        joinedAt: '2024-01-17T14:00:00Z',
-      },
-    ],
-    isPublic: false,
-    createdAt: '2024-01-15T10:00:00Z',
-    updatedAt: '2024-01-20T15:30:00Z',
-    lastAccessedAt: '2024-02-10T09:00:00Z',
-  },
-  {
-    id: 'board-2',
-    title: 'Design System Components',
-    description: 'Visual guide and component library',
-    thumbnail: 'https://images.unsplash.com/photo-1558655146-9f40138edfeb?w=400&h=300&fit=crop',
-    ownerId: 'user-1',
-    collaborators: [],
-    isPublic: true,
-    createdAt: '2024-01-18T11:00:00Z',
-    updatedAt: '2024-02-05T16:00:00Z',
-    lastAccessedAt: '2024-02-08T14:00:00Z',
-  },
-  {
-    id: 'board-3',
-    title: 'Team Retrospective',
-    description: 'Sprint 5 team retrospective notes',
-    ownerId: 'user-1',
-    collaborators: [],
-    isPublic: false,
-    createdAt: '2024-02-01T09:00:00Z',
-    updatedAt: '2024-02-01T10:00:00Z',
-    lastAccessedAt: '2024-02-01T10:00:00Z',
-  },
-  {
-    id: 'board-4',
-    title: 'User Flow Diagrams',
-    description: 'Onboarding and checkout flows',
-    thumbnail: 'https://images.unsplash.com/photo-1541625602330-227d8d6a5a8d?w=400&h=300&fit=crop',
-    ownerId: 'user-1',
-    collaborators: [],
-    isPublic: false,
-    createdAt: '2024-01-22T14:00:00Z',
-    updatedAt: '2024-01-28T11:00:00Z',
-    lastAccessedAt: '2024-01-28T11:00:00Z',
-  },
-];
+interface BoardsResponse {
+  boards: Board[];
+}
+
+interface BoardResponse {
+  board: Board;
+}
 
 class BoardService {
-  async getBoards(): Promise<ApiResponse<Board[]>> {
-    await sleep(600);
-    return { success: true, data: MOCK_BOARDS };
+  async getBoards(): Promise<Board[]> {
+    const res = await apiService.get<BoardsResponse>('/boards');
+    return res.boards.map(this.normalizeBoard);
   }
 
-  async getBoard(id: string): Promise<ApiResponse<Board>> {
-    await sleep(400);
-    const board = MOCK_BOARDS.find((b) => b.id === id);
-    if (!board) {
-      throw new Error('Board not found');
-    }
-    return { success: true, data: board };
+  async getBoard(id: string): Promise<Board> {
+    const res = await apiService.get<BoardResponse>(`/boards/${id}`);
+    return this.normalizeBoard(res.board);
   }
 
-  async createBoard(data: CreateBoardDto): Promise<ApiResponse<Board>> {
-    await sleep(800);
-    const newBoard: Board = {
-      id: `board-${Date.now()}`,
-      title: data.title,
-      description: data.description,
-      ownerId: 'user-1',
-      collaborators: [],
-      isPublic: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+  async createBoard(data: CreateBoardDto): Promise<Board> {
+    const res = await apiService.post<BoardResponse>('/boards', data);
+    return this.normalizeBoard(res.board);
+  }
+
+  async updateBoard(id: string, data: UpdateBoardDto): Promise<Board> {
+    const res = await apiService.patch<BoardResponse>(`/boards/${id}`, data);
+    return this.normalizeBoard(res.board);
+  }
+
+  async deleteBoard(id: string): Promise<void> {
+    await apiService.delete<void>(`/boards/${id}`);
+  }
+
+  async shareBoard(id: string, email: string, permission: string): Promise<{ member: BoardMember; updated: boolean }> {
+    return apiService.post<{ member: BoardMember; updated: boolean }>(`/boards/${id}/share`, { email, permission });
+  }
+
+  async updateMemberPermission(id: string, userId: string, permission: string): Promise<BoardMember> {
+    const res = await apiService.patch<{ member: BoardMember }>(`/boards/${id}/members/${userId}`, { permission });
+    return res.member;
+  }
+
+  async removeMember(id: string, userId: string): Promise<void> {
+    await apiService.delete<void>(`/boards/${id}/members/${userId}`);
+  }
+
+  async saveSnapshot(id: string, data: string): Promise<void> {
+    await apiService.post(`/boards/${id}/snapshots`, { data });
+  }
+
+  async getSnapshots(id: string): Promise<any[]> {
+    const res = await apiService.get<{ snapshots: any[] }>(`/boards/${id}/snapshots`);
+    return res.snapshots;
+  }
+
+  async getSnapshotData(id: string, snapshotId: string): Promise<string> {
+    const res = await apiService.get<{ data: string }>(`/boards/${id}/snapshots/${snapshotId}`);
+    return res.data;
+  }
+
+  private normalizeBoard(board: any): Board {
+    return {
+      id: board.id,
+      title: board.title,
+      description: board.description ?? undefined,
+      ownerId: board.ownerId,
+      owner: board.owner,
+      collaborators: (board.members ?? []).map((m: any) => ({
+        userId: m.userId,
+        user: m.user,
+        permission: m.permission,
+        joinedAt: m.createdAt ?? new Date().toISOString(),
+      })),
+      members: board.members ?? [],
+      isPublic: board.isPublic,
+      shapeCount: board.shapeCount,
+      permission: board.permission,
+      createdAt: board.createdAt,
+      updatedAt: board.updatedAt,
     };
-    MOCK_BOARDS = [newBoard, ...MOCK_BOARDS];
-    return { success: true, data: newBoard };
-  }
-
-  async updateBoard(id: string, data: UpdateBoardDto): Promise<ApiResponse<Board>> {
-    await sleep(500);
-    const board = MOCK_BOARDS.find((b) => b.id === id);
-    if (!board) {
-      throw new Error('Board not found');
-    }
-    Object.assign(board, data, {
-      updatedAt: new Date().toISOString(),
-    });
-    return { success: true, data: board };
-  }
-
-  async deleteBoard(id: string): Promise<ApiResponse<void>> {
-    await sleep(500);
-    MOCK_BOARDS = MOCK_BOARDS.filter((b) => b.id !== id);
-    return { success: true, data: undefined };
-  }
-
-  async searchBoards(query: string): Promise<ApiResponse<Board[]>> {
-    await sleep(300);
-    const filtered = MOCK_BOARDS.filter(
-      (b) =>
-        b.title.toLowerCase().includes(query.toLowerCase()) ||
-        b.description?.toLowerCase().includes(query.toLowerCase())
-    );
-    return { success: true, data: filtered };
-  }
-
-  // API methods (for future backend connection)
-  async getBoardsApi(): Promise<ApiResponse<Board[]>> {
-    return apiService.get<Board[]>('/boards');
-  }
-
-  async getBoardApi(id: string): Promise<ApiResponse<Board>> {
-    return apiService.get<Board>(`/boards/${id}`);
-  }
-
-  async createBoardApi(data: CreateBoardDto): Promise<ApiResponse<Board>> {
-    return apiService.post<Board>('/boards', data);
-  }
-
-  async updateBoardApi(id: string, data: UpdateBoardDto): Promise<ApiResponse<Board>> {
-    return apiService.patch<Board>(`/boards/${id}`, data);
-  }
-
-  async deleteBoardApi(id: string): Promise<ApiResponse<void>> {
-    return apiService.delete<void>(`/boards/${id}`);
   }
 }
 

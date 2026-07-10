@@ -18,6 +18,7 @@ interface CollaborationStore {
   updateCursor: (userId: string, x: number, y: number) => void;
   setCurrentUserColor: (color: string) => void;
   setShowCursors: (show: boolean) => void;
+  setCursors: (cursors: CollaboratorCursor[]) => void;
   addCursor: (cursor: CollaboratorCursor) => void;
   removeCursor: (userId: string) => void;
 }
@@ -61,6 +62,8 @@ export const useCollaborationStore = create<CollaborationStore>((set) => ({
   setCurrentUserColor: (color) => set({ currentUserColor: color }),
 
   setShowCursors: (show) => set({ showCursors: show }),
+
+  setCursors: (cursors) => set({ cursors }),
 
   addCursor: (cursor) =>
     set((state) => ({

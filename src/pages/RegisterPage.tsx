@@ -36,12 +36,9 @@ export function RegisterPage() {
     try {
       const { confirmPassword: _confirm, terms: _terms, ...credentials } = data;
       const response = await authService.register(credentials);
-      if (response.success && response.data) {
-        login(response.data.user);
-        localStorage.setItem('accessToken', response.data.tokens.accessToken);
-        addToast({ type: 'success', title: 'Account created!', message: 'Welcome to CollabBoard!' });
-        navigate('/dashboard');
-      }
+      login(response.user, response.accessToken, response.refreshToken);
+      addToast({ type: 'success', title: 'Account created!', message: 'Welcome to CollabBoard!' });
+      navigate('/dashboard');
     } catch (error) {
       addToast({
         type: 'error',

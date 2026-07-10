@@ -1,5 +1,3 @@
-import type { ApiResponse, ApiError, ApiResponseRequestConfig } from '@/types/api';
-
 const API_BASE_URL = '/api/v1';
 
 class ApiService {
@@ -9,10 +7,9 @@ class ApiService {
     this.baseUrl = baseUrl;
   }
 
-  private getHeaders(config?: ApiResponseRequestConfig): HeadersInit {
+  private getHeaders(): HeadersInit {
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
-      ...config?.headers,
     };
 
     const token = localStorage.getItem('accessToken');
@@ -23,66 +20,48 @@ class ApiService {
     return headers;
   }
 
-  private async handleResponse<T>(response: Response): Promise<ApiResponse<T>> {
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {},
+  ): Promise<T> {
+    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+      ...options,
+      headers: {
+        ...this.getHeaders(),
+        ...options.headers,
+      },
+    });
+
+    const data = await response.json().catch(() => null);
+
     if (!response.ok) {
-      const error: ApiError = await response.json().catch(() => ({
-        message: 'An error occurred',
-        code: 'UNKNOWN_ERROR',
-        status: response.status,
-      }));
-      throw new Error(error.message || 'API request failed');
+      const message = data?.error ?? `Request failed with status ${response.status}`;
+      throw new Error(message);
     }
 
-    return response.json();
+    return data as T;
   }
 
-  async get<T>(endpoint: string, config?: ApiResponseRequestConfig): Promise<ApiResponse<T>> {
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
-      method: 'GET',
-      headers: this.getHeaders(config),
-      signal: config?.signal,
-    });
-    return this.handleResponse<T>(response);
+  async get<T>(endpoint: string): Promise<T> {
+    return this.request<T>(endpoint, { method: 'GET' });
   }
 
-  async post<T>(
-    endpoint: string,
-    data?: unknown,
-    config?: ApiResponseRequestConfig
-  ): Promise<ApiResponse<T>> {
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+  async post<T>(endpoint: string, data?: unknown): Promise<T> {
+    return this.request<T>(endpoint, {
       method: 'POST',
-      headers: this.getHeaders(config),
-      body: JSON.stringify(data),
-      signal: config?.signal,
+      body: data ? JSON.stringify(data) : undefined,
     });
-    return this.handleResponse<T>(response);
   }
 
-  async patch<T>(
-    endpoint: string,
-    data?: unknown,
-    config?: ApiResponseRequestConfig
-  ): Promise<ApiResponse<T>> {
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+  async patch<T>(endpoint: string, data?: unknown): Promise<T> {
+    return this.request<T>(endpoint, {
       method: 'PATCH',
-      headers: this.getHeaders(config),
-      body: JSON.stringify(data),
-      signal: config?.signal,
+      body: data ? JSON.stringify(data) : undefined,
     });
-    return this.handleResponse<T>(response);
   }
 
-  async delete<T>(
-    endpoint: string,
-    config?: ApiResponseRequestConfig
-  ): Promise<ApiResponse<T>> {
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
-      method: 'DELETE',
-      headers: this.getHeaders(config),
-      signal: config?.signal,
-    });
-    return this.handleResponse<T>(response);
+  async delete<T>(endpoint: string): Promise<T> {
+    return this.request<T>(endpoint, { method: 'DELETE' });
   }
 }
 

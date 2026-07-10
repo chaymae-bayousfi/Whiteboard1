@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link, Outlet, useLocation } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   FolderOpen,
@@ -12,12 +12,32 @@ import {
 } from 'lucide-react';
 import { Button, Input, Avatar, Dropdown, DropdownItem, DropdownDivider } from '@/components/ui';
 import { useAuthStore } from '@/stores';
+import { authService } from '@/services';
 import { cn } from '@/utils';
 
 export function DashboardLayout() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const location = useLocation();
-  const { user, logout } = useAuthStore();
+  const navigate = useNavigate();
+  const { user, logout, refreshToken, isAuthenticated } = useAuthStore();
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      navigate('/login', { replace: true });
+    }
+  }, [isAuthenticated, navigate]);
+
+  const handleLogout = async () => {
+    try {
+      if (refreshToken) {
+        await authService.logout(refreshToken);
+      }
+    } catch {
+      // ignore - logout anyway
+    }
+    logout();
+    navigate('/login', { replace: true });
+  };
 
   const navigation = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
@@ -125,7 +145,7 @@ export function DashboardLayout() {
                     icon={<LogOut className="w-4 h-4" />}
                     label="Sign out"
                     variant="danger"
-                    onClick={() => logout()}
+                    onClick={handleLogout}
                   />
                 </Dropdown>
               </div>

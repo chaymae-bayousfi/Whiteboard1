@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Stage, Layer, Rect, Ellipse, Line, Arrow, Text } from 'react-konva';
 import {
@@ -19,8 +19,9 @@ import {
 } from 'lucide-react';
 import { BoardLayout } from '@/layouts';
 import { Tooltip, ColorPicker } from '@/components/ui';
-import { useBoardStore, useCanvasStore, useToolStore } from '@/stores';
+import { useBoardStore, useCanvasStore, useToolStore, useAuthStore, useCollaborationStore } from '@/stores';
 import { boardService, exportService } from '@/services';
+import { useCollaboration } from '@/hooks';
 import { generateId, cn } from '@/utils';
 import { STROKE_COLORS, FILL_COLORS, STROKE_WIDTHS, FONT_SIZES } from '@/constants';
 import { CANVAS_CONFIG } from '@/constants/canvas';
@@ -42,6 +43,8 @@ export function BoardEditorPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
+  const { user, accessToken } = useAuthStore();
+  const { setConnected, setConnectionStatus, setOnlineUsers, setCursors } = useCollaborationStore();
   const { currentBoard, setCurrentBoard, updateRecentBoards } = useBoardStore();
   const {
     elements,
@@ -60,6 +63,7 @@ export function BoardEditorPage() {
     redo,
     history,
     historyIndex,
+    setElements,
   } = useCanvasStore();
 
   const {
@@ -90,7 +94,54 @@ export function BoardEditorPage() {
 
   useEffect(() => {
     loadBoard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // Yjs collaboration
+  const collab = useCollaboration({
+    boardId: id ?? '',
+    token: accessToken ?? '',
+    user: { id: user?.id ?? '', name: user?.name ?? 'Anonymous', email: user?.email ?? '' },
+    onElementsChange: (els) => {
+      setElements(els);
+    },
+  });
+
+  useEffect(() => {
+    setConnected(collab.isConnected);
+    setConnectionStatus(collab.isConnected ? 'connected' : 'connecting');
+    setOnlineUsers(collab.onlineUsers.map((u) => ({
+      id: u.userId,
+      email: '',
+      name: u.name,
+      avatarColor: u.color,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })));
+    setCursors(collab.cursors.map((c) => ({
+      userId: c.userId,
+      user: {
+        id: c.userId,
+        email: '',
+        name: c.name,
+        avatarColor: c.color,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      x: c.x,
+      y: c.y,
+      color: c.color,
+      lastSeen: new Date().toISOString(),
+    })));
+  }, [collab.isConnected, collab.onlineUsers, collab.cursors, setConnected, setConnectionStatus, setOnlineUsers, setCursors]);
+
+  const syncToYjs = useCallback((el: CanvasElement) => {
+    collab.updateElement(el);
+  }, [collab]);
+
+  const removeFromYjs = useCallback((elementId: string) => {
+    collab.deleteElement(elementId);
+  }, [collab]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -123,6 +174,7 @@ export function BoardEditorPage() {
       else if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selectedIds.length > 0) {
           deleteElements(selectedIds);
+      selectedIds.forEach((id) => removeFromYjs(id));
           clearSelection();
         }
       } else if (e.key === 'Escape') {
@@ -145,11 +197,9 @@ export function BoardEditorPage() {
     if (!id) return;
     setIsLoading(true);
     try {
-      const response = await boardService.getBoard(id);
-      if (response.success && response.data) {
-        setCurrentBoard(response.data);
-        updateRecentBoards(response.data);
-      }
+      const board = await boardService.getBoard(id);
+      setCurrentBoard(board);
+      updateRecentBoards(board);
     } catch {
       navigate('/dashboard');
     } finally {
@@ -180,7 +230,7 @@ export function BoardEditorPage() {
 
     if (activeTool === 'eraser') {
       const shape = e.target;
-      if (shape && shape.id()) deleteElements([shape.id()]);
+      if (shape && shape.id()) { deleteElements([shape.id()]); removeFromYjs(shape.id()); }
       return;
     }
 
@@ -200,6 +250,7 @@ export function BoardEditorPage() {
         locked: false,
       };
       addElement(element);
+      syncToYjs(element);
       selectElements([element.id]);
       return;
     }
@@ -337,7 +388,10 @@ export function BoardEditorPage() {
         break;
     }
 
-    if (element) addElement(element);
+    if (element) {
+      addElement(element);
+      syncToYjs(element);
+    }
 
     setIsDrawing(false);
     setStartPoint(null);
@@ -384,11 +438,12 @@ export function BoardEditorPage() {
 
     const onDragEnd = (e: any) => {
       updateElement(el.id, { x: e.target.x(), y: e.target.y() });
+      syncToYjs({ ...el, x: e.target.x(), y: e.target.y() });
     };
 
     const onElementClick = () => {
       if (activeTool === 'select') selectElements([el.id]);
-      else if (activeTool === 'eraser') deleteElements([el.id]);
+      else if (activeTool === 'eraser') { deleteElements([el.id]); removeFromYjs(el.id); }
     };
 
     const commonProps = {
@@ -660,7 +715,7 @@ export function BoardEditorPage() {
       onExportPNG={() => exportService.exportToPNG(elements, `${currentBoard?.title ?? 'board'}.png`)}
       onExportJSON={() => exportService.exportToJSON(elements, `${currentBoard?.title ?? 'board'}.json`)}
       onImportJSON={(imported) => {
-        imported.forEach((el) => addElement(el));
+        imported.forEach((el) => { addElement(el); syncToYjs(el); });
       }}
     >
       <div ref={containerRef} className="w-full h-full bg-gray-50">
@@ -673,8 +728,15 @@ export function BoardEditorPage() {
           scaleX={zoom}
           scaleY={zoom}
           onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
+          onMouseMove={(e) => {
+            handleMouseMove(e);
+            const pos = e.target.getStage()?.getPointerPosition();
+            if (pos) {
+              collab.updateCursor((pos.x - panX) / zoom, (pos.y - panY) / zoom);
+            }
+          }}
           onMouseUp={handleMouseUp}
+          onMouseLeave={() => collab.clearCursor()}
           onTouchStart={handleMouseDown}
           onTouchMove={handleMouseMove}
           onTouchEnd={handleMouseUp}

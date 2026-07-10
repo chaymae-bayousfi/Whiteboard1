@@ -3,6 +3,7 @@ export interface User {
   email: string;
   name: string;
   avatar?: string;
+  avatarColor?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -32,11 +33,22 @@ export interface Board {
   description?: string;
   thumbnail?: string;
   ownerId: string;
+  owner?: User;
   collaborators: BoardCollaborator[];
+  members?: BoardMember[];
   isPublic: boolean;
+  shapeCount?: number;
+  permission?: string;
   createdAt: string;
   updatedAt: string;
   lastAccessedAt?: string;
+}
+
+export interface BoardMember {
+  id: string;
+  userId: string;
+  permission: string;
+  user: User;
 }
 
 export interface BoardCollaborator {

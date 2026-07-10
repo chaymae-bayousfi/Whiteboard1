@@ -3,10 +3,13 @@ import { persist } from 'zustand/middleware';
 import type { User, AuthState } from '@/types';
 
 interface AuthStore extends AuthState {
-  login: (user: User) => void;
+  accessToken: string | null;
+  refreshToken: string | null;
+  login: (user: User, accessToken: string, refreshToken: string) => void;
   logout: () => void;
   setLoading: (loading: boolean) => void;
   updateUser: (user: Partial<User>) => void;
+  setTokens: (accessToken: string, refreshToken: string) => void;
 }
 
 export const useAuthStore = create<AuthStore>()(
@@ -15,20 +18,30 @@ export const useAuthStore = create<AuthStore>()(
       user: null,
       isAuthenticated: false,
       isLoading: false,
+      accessToken: null,
+      refreshToken: null,
 
-      login: (user) =>
+      login: (user, accessToken, refreshToken) => {
+        localStorage.setItem('accessToken', accessToken);
         set({
           user,
           isAuthenticated: true,
           isLoading: false,
-        }),
+          accessToken,
+          refreshToken,
+        });
+      },
 
-      logout: () =>
+      logout: () => {
+        localStorage.removeItem('accessToken');
         set({
           user: null,
           isAuthenticated: false,
           isLoading: false,
-        }),
+          accessToken: null,
+          refreshToken: null,
+        });
+      },
 
       setLoading: (loading) => set({ isLoading: loading }),
 
@@ -36,12 +49,19 @@ export const useAuthStore = create<AuthStore>()(
         set((state) => ({
           user: state.user ? { ...state.user, ...userData } : null,
         })),
+
+      setTokens: (accessToken, refreshToken) => {
+        localStorage.setItem('accessToken', accessToken);
+        set({ accessToken, refreshToken });
+      },
     }),
     {
       name: 'auth-storage',
       partialize: (state) => ({
         user: state.user,
         isAuthenticated: state.isAuthenticated,
+        accessToken: state.accessToken,
+        refreshToken: state.refreshToken,
       }),
     }
   )

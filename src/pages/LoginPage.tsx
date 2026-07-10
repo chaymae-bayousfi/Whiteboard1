@@ -27,16 +27,13 @@ export function LoginPage() {
     setIsLoading(true);
     try {
       const response = await authService.login(data);
-      if (response.success && response.data) {
-        login(response.data.user);
-        localStorage.setItem('accessToken', response.data.tokens.accessToken);
-        addToast({
-          type: 'success',
-          title: 'Welcome back!',
-          message: `Logged in as ${response.data.user.name}`,
-        });
-        navigate('/dashboard');
-      }
+      login(response.user, response.accessToken, response.refreshToken);
+      addToast({
+        type: 'success',
+        title: 'Welcome back!',
+        message: `Logged in as ${response.user.name}`,
+      });
+      navigate('/dashboard');
     } catch (error) {
       addToast({
         type: 'error',

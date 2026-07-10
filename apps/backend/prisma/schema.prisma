@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String         @id @default(uuid())
+  email        String         @unique
+  name         String
+  passwordHash String
+  avatarColor  String         @default("#f472b6")
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  boards       Board[]
+  memberships  BoardMember[]
+  refreshTokens RefreshToken[]
+  shapes       Shape[]
+}
+
+model Board {
+  id          String        @id @default(uuid())
+  title        String
+  description  String?
+  isPublic     Boolean       @default(false)
+  ownerId      String
+  owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  members      BoardMember[]
+  shapes       Shape[]
+  snapshots    Snapshot[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model BoardMember {
+  id          String   @id @default(uuid())
+  boardId     String
+  userId     String
+  permission  String   @default("view")
+  board       Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([boardId, userId])
+  @@index([userId])
+}
+
+model Shape {
+  id          String   @id @default(uuid())
+  boardId     String
+  userId      String?
+  elementId   String
+  type        String
+  data        Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  board       Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([boardId, elementId])
+  @@index([boardId])
+}
+
+model Snapshot {
+  id        String   @id @default(uuid())
+  boardId   String
+  key       String
+  size      Int      @default(0)
+  createdBy String
+  createdAt DateTime @default(now())
+
+  board     Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+
+  @@index([boardId])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  token     String    @unique
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}

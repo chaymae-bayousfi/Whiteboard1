@@ -36,8 +36,8 @@ export function DashboardPage() {
   const loadBoards = async () => {
     setIsLoading(true);
     try {
-      const response = await boardService.getBoards();
-      if (response.success) setBoards(response.data);
+      const boards = await boardService.getBoards();
+      setBoards(boards);
     } catch (error) {
       addToast({
         type: 'error',
@@ -51,13 +51,11 @@ export function DashboardPage() {
 
   const handleCreateBoard = async (data: CreateBoardDto) => {
     try {
-      const response = await boardService.createBoard(data);
-      if (response.success && response.data) {
-        addBoard(response.data);
-        setIsCreateModalOpen(false);
-        addToast({ type: 'success', title: 'Board created!' });
-        navigate(`/board/${response.data.id}`);
-      }
+      const board = await boardService.createBoard(data);
+      addBoard(board);
+      setIsCreateModalOpen(false);
+      addToast({ type: 'success', title: 'Board created!' });
+      navigate(`/board/${board.id}`);
     } catch {
       addToast({ type: 'error', title: 'Failed to create board' });
     }
