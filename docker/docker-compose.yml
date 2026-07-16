@@ -40,7 +40,7 @@ services:
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
       - "9000:9000"
-      - "9001:9001"
+      - "9002:9001"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -51,8 +51,9 @@ services:
 
   backend:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile
+      target: backend-base  
     container_name: whiteboard-backend
     depends_on:
       postgres:
@@ -92,8 +93,9 @@ services:
     environment:
       VITE_API_URL: http://localhost:4000/api/v1
       VITE_YJS_WS_URL: ws://localhost:4001/yjs
+      VITE_PROXY_TARGET: http://backend:4000 
     volumes:
-      - ./:/app
+      - ../:/app
       - /app/node_modules
     ports:
       - "5173:5173"

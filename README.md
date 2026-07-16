@@ -181,17 +181,16 @@ YJS_WS_PORT=4001
 ### 3. Configure PostgreSQL
 
 ```bash
-# Install PostgreSQL (Ubuntu/Debian)
-sudo apt update && sudo apt install postgresql postgresql-contrib
-
-# Start PostgreSQL
-sudo systemctl start postgresql
-sudo systemctl enable postgresql
-
-# Create database and user
-sudo -u postgres psql -c "CREATE USER whiteboard WITH PASSWORD 'whiteboard';"
-sudo -u postgres psql -c "CREATE DATABASE whiteboard OWNER whiteboard;"
-sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE whiteboard TO whiteboard;"
+#Étape 1 : Ouvrir psql
+psql -U postgres
+#Étape 2 : Créer l'utilisateur
+CREATE USER whiteboard WITH PASSWORD 'whiteboard';
+#Étape 3 : Créer la base
+CREATE DATABASE whiteboard OWNER whiteboard;
+#Étape 4 : Donner les droits
+GRANT ALL PRIVILEGES ON DATABASE whiteboard TO whiteboard;
+#Étape 5 : Quitter
+\q
 ```
 
 ### 4. Configure Redis

@@ -14,12 +14,16 @@ export default defineConfig({
     exclude: ['lucide-react'],
   },
   server: {
-    port: 5173,
+    host: '0.0.0.0',
     proxy: {
       '/api': {
-        target: 'http://localhost:4000',
+        target: 'http://backend:4000',      // ← nom du service Docker, pas localhost
         changeOrigin: true,
       },
-    },
+      '/yjs': {
+        target: 'ws://backend:4001',
+        ws: true,
+      }
+    }
   },
 });

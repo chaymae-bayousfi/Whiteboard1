@@ -1,11 +1,13 @@
 # Backend
 FROM node:20-alpine AS backend-base
 WORKDIR /app
+RUN apk add --no-cache openssl
 RUN npm install -g tsx
 COPY apps/backend/package.json ./
 RUN npm install --production=false
 COPY apps/backend/ ./
 COPY packages/shared ../packages/shared
+RUN npx prisma generate --schema=prisma/schema.prisma
 EXPOSE 4000 4001
 CMD ["npm", "run", "dev"]
 
