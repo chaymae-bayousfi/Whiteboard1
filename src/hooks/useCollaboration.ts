@@ -157,19 +157,6 @@ export function useCollaboration({
     ymap.clear();
   }, []);
 
-  // Reorder all elements (z-order sync)
-  const reorderElements = useCallback((elements: CanvasElement[]) => {
-    const ydoc = ydocRef.current;
-    const ymap = ymapRef.current;
-    if (!ydoc || !ymap) return;
-    ydoc.transact(() => {
-      ymap.clear();
-      for (const el of elements) {
-        ymap.set(el.id, el);
-      }
-    });
-  }, []);
-
   // Update cursor position via awareness
   const updateCursor = useCallback((x: number, y: number) => {
     const provider = providerRef.current;
@@ -191,7 +178,6 @@ export function useCollaboration({
     updateElement,
     deleteElement,
     setElements,
-    reorderElements,
     clearAll,
     updateCursor,
     clearCursor,
