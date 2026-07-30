@@ -90,12 +90,12 @@ class BoardDoc {
 
 const docs = new Map<string, BoardDoc>();
 
-function getOrCreateDoc(boardId: string): BoardDoc {
+async function getOrCreateDoc(boardId: string): Promise<BoardDoc> {
   let bdoc = docs.get(boardId);
   if (!bdoc) {
     bdoc = new BoardDoc(boardId);
     docs.set(boardId, bdoc);
-    bdoc.loadFromDatabase();
+    await bdoc.loadFromDatabase();
   }
   return bdoc;
 }
@@ -215,7 +215,7 @@ export function startYjsServer(): WebSocketServer {
       return;
     }
 
-    const bdoc = getOrCreateDoc(boardId);
+    const bdoc = await getOrCreateDoc(boardId);
     const clientInfo: ClientInfo = {
       userId: payload.sub,
       name: payload.name,

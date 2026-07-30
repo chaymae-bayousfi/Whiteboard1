@@ -22,9 +22,14 @@ interface CanvasStore {
   setElements: (elements: CanvasElement[]) => void;
   addElement: (element: CanvasElement) => void;
   updateElement: (id: string, updates: Partial<CanvasElement>) => void;
+  updateElements: (ids: string[], updates: Partial<CanvasElement>) => void;
   deleteElements: (ids: string[]) => void;
   selectElements: (ids: string[]) => void;
   clearSelection: () => void;
+  bringToFront: (ids: string[]) => void;
+  sendToBack: (ids: string[]) => void;
+  bringForward: (ids: string[]) => void;
+  sendBackward: (ids: string[]) => void;
   setZoom: (zoom: number) => void;
   setPan: (panX: number, panY: number) => void;
   undo: () => void;
@@ -71,6 +76,58 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       ),
       isDirty: true,
     })),
+
+  updateElements: (ids, updates) =>
+    set((state) => ({
+      elements: state.elements.map((el) =>
+        ids.includes(el.id) ? { ...el, ...updates } : el
+      ),
+      isDirty: true,
+    })),
+
+  bringToFront: (ids) => {
+    const { elements } = get();
+    const idSet = new Set(ids);
+    const toMove = elements.filter((el) => idSet.has(el.id));
+    const rest = elements.filter((el) => !idSet.has(el.id));
+    set({ elements: [...rest, ...toMove], isDirty: true });
+    get().saveToHistory();
+  },
+
+  sendToBack: (ids) => {
+    const { elements } = get();
+    const idSet = new Set(ids);
+    const toMove = elements.filter((el) => idSet.has(el.id));
+    const rest = elements.filter((el) => !idSet.has(el.id));
+    set({ elements: [...toMove, ...rest], isDirty: true });
+    get().saveToHistory();
+  },
+
+  bringForward: (ids) => {
+    const { elements } = get();
+    const idSet = new Set(ids);
+    const arr = [...elements];
+    for (let i = arr.length - 2; i >= 0; i--) {
+      if (idSet.has(arr[i].id) && !idSet.has(arr[i + 1].id)) {
+        [arr[i], arr[i + 1]] = [arr[i + 1], arr[i]];
+      }
+    }
+    set({ elements: arr, isDirty: true });
+    get().saveToHistory();
+  },
+
+  sendBackward: (ids) => {
+    const { elements } = get();
+    const idSet = new Set(ids);
+    const arr = [...elements];
+    for (let i = 1; i < arr.length; i++) {
+      if (idSet.has(arr[i].id) && !idSet.has(arr[i - 1].id)) {
+        [arr[i], arr[i - 1]] = [arr[i - 1], arr[i]];
+      }
+    }
+    set({ elements: arr, isDirty: true });
+    get().saveToHistory();
+  },
 
   deleteElements: (ids) => {
     const { elements, selectedIds, history, historyIndex } = get();
