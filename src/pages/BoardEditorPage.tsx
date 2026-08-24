@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { BoardLayout } from '@/layouts';
 import { Tooltip, ColorPicker } from '@/components/ui';
+import { CollabCursors } from '@/components/collaboration';
 import { useBoardStore, useCanvasStore, useToolStore, useAuthStore, useCollaborationStore } from '@/stores';
 import { boardService, exportService } from '@/services';
 import { useCollaboration } from '@/hooks';
@@ -61,7 +62,7 @@ export function BoardEditorPage() {
   const navigate = useNavigate();
 
   const { user, accessToken } = useAuthStore();
-  const { setConnected, setConnectionStatus, setOnlineUsers, setCursors } = useCollaborationStore();
+  const { setConnected, setConnectionStatus, setOnlineUsers, setCursors, cursors } = useCollaborationStore();
   const { currentBoard, setCurrentBoard, updateRecentBoards } = useBoardStore();
   const {
     elements,
@@ -130,19 +131,21 @@ export function BoardEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  const handleCollabElementsChange = useCallback((els: CanvasElement[]) => {
+    setElements(els);
+  }, [setElements]);
+
   // Yjs collaboration
   const collab = useCollaboration({
     boardId: id ?? '',
     token: accessToken ?? '',
     user: { id: user?.id ?? '', name: user?.name ?? 'Anonymous', email: user?.email ?? '' },
-    onElementsChange: (els) => {
-      setElements(els);
-    },
+    onElementsChange: handleCollabElementsChange,
   });
 
   useEffect(() => {
     setConnected(collab.isConnected);
-    setConnectionStatus(collab.isConnected ? 'connected' : 'connecting');
+    setConnectionStatus(collab.connectionStatus);
     setOnlineUsers(collab.onlineUsers.map((u) => ({
       id: u.userId,
       email: '',
@@ -166,7 +169,7 @@ export function BoardEditorPage() {
       color: c.color,
       lastSeen: new Date().toISOString(),
     })));
-  }, [collab.isConnected, collab.onlineUsers, collab.cursors, setConnected, setConnectionStatus, setOnlineUsers, setCursors]);
+  }, [collab.isConnected, collab.connectionStatus, collab.onlineUsers, collab.cursors, setConnected, setConnectionStatus, setOnlineUsers, setCursors]);
 
   const syncToYjs = useCallback((el: CanvasElement) => {
     collab.updateElement(el);
@@ -1253,6 +1256,16 @@ export function BoardEditorPage() {
             />
           </Layer>
         </Stage>
+        <div className="absolute inset-0 pointer-events-none z-20">
+          <CollabCursors
+            cursors={cursors.filter((cursor) => cursor.userId !== user?.id)}
+            zoom={zoom}
+            panX={panX}
+            panY={panY}
+            containerWidth={stageSize.width}
+            containerHeight={stageSize.height}
+          />
+        </div>
 
         {editingText && textEditorScreenPos && (
           <textarea
