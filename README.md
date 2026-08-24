@@ -119,7 +119,7 @@ docker exec -it whiteboard-backend npx prisma db seed
 ```
 
 Access:
-- Frontend: http://localhost:5173
+- Frontend: d
 - Backend API: http://localhost:4000/api/v1
 - MinIO Console: http://localhost:9001 (minioadmin / minioadmin)
 - Yjs WebSocket: ws://localhost:4001/yjs

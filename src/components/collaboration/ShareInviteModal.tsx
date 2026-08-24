@@ -16,6 +16,7 @@ interface ShareModalProps {
 export function ShareModal({ isOpen, onClose, board, currentUser }: ShareModalProps) {
   const [copied, setCopied] = useState(false);
   const [isPublic, setIsPublic] = useState(board.isPublic);
+  const [isUpdating, setIsUpdating] = useState(false);
 
   const boardUrl = `${window.location.origin}/board/${board.id}`;
 
@@ -23,6 +24,21 @@ export function ShareModal({ isOpen, onClose, board, currentUser }: ShareModalPr
     await copyToClipboard(boardUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleTogglePublic = async (newValue: boolean) => {
+    setIsUpdating(true);
+    try {
+      const { boardService } = await import('@/services');
+      await boardService.updateBoard(board.id, { isPublic: newValue });
+      setIsPublic(newValue);
+    } catch (err) {
+      console.error('Failed to update board visibility:', err);
+      // Revert on error
+      setIsPublic(!newValue);
+    } finally {
+      setIsUpdating(false);
+    }
   };
 
   return (
@@ -78,7 +94,11 @@ export function ShareModal({ isOpen, onClose, board, currentUser }: ShareModalPr
                       </p>
                     </div>
                   </div>
-                  <Toggle checked={isPublic} onChange={setIsPublic} />
+                  <Toggle
+                    checked={isPublic}
+                    onChange={handleTogglePublic}
+                    disabled={isUpdating}
+                  />
                 </div>
 
                 <div>
@@ -162,22 +182,32 @@ interface InviteModalProps {
   boardId: string;
 }
 
-export function InviteModal({ isOpen, onClose, boardId: _boardId }: InviteModalProps) {
+export function InviteModal({ isOpen, onClose, boardId }: InviteModalProps) {
   const [email, setEmail] = useState('');
   const [permission, setPermission] = useState<Permission>('edit');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [invited, setInvited] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleInvite = async () => {
     if (!email) return;
     setIsSubmitting(true);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    setIsSubmitting(false);
-    setInvited(true);
-    setTimeout(() => {
-      setInvited(false);
-      setEmail('');
-    }, 2000);
+    setError(null);
+
+    try {
+      const { boardService } = await import('@/services');
+      await boardService.shareBoard(boardId, email, permission);
+      setInvited(true);
+      setTimeout(() => {
+        setInvited(false);
+        setEmail('');
+        onClose();
+      }, 2000);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to invite user. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -215,6 +245,11 @@ export function InviteModal({ isOpen, onClose, boardId: _boardId }: InviteModalP
               </div>
 
               <div className="px-6 space-y-4">
+                {error && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-sm text-red-600">{error}</p>
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Email address

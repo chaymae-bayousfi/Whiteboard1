@@ -201,16 +201,25 @@ export function BoardEditorPage() {
   useEffect(() => {
     const handleResize = () => {
       if (containerRef.current) {
-        setStageSize({
-          width: containerRef.current.offsetWidth,
-          height: containerRef.current.offsetHeight,
-        });
+        const width = containerRef.current.offsetWidth;
+        const height = containerRef.current.offsetHeight;
+
+        // Only update if we have valid dimensions
+        if (width > 0 && height > 0) {
+          setStageSize({ width, height });
+        }
       }
     };
 
+    // Call resize after a short delay to ensure layout is ready
+    const timer = setTimeout(handleResize, 100);
     handleResize();
+
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', handleResize);
+    };
   }, []);
 
   useEffect(() => {
@@ -872,13 +881,15 @@ export function BoardEditorPage() {
           />
         );
       case 'text':
+        // Show text during editing for better visibility
         return (
           <Text
             {...commonProps}
-            text={el.text ?? ''}
+            text={el.text ?? 'Type here...'}
             fontSize={el.fontSize ?? 16}
             fontFamily={el.fontFamily ?? 'Inter'}
             fill={el.stroke ?? '#374151'}
+            opacity={(el.text ?? '').length === 0 ? 0.5 : 1}
             onDblClick={() => setEditingText({ id: el.id, text: el.text ?? '', x: el.x, y: el.y, fontSize: el.fontSize ?? 16 })}
             onDblTap={() => setEditingText({ id: el.id, text: el.text ?? '', x: el.x, y: el.y, fontSize: el.fontSize ?? 16 })}
           />
@@ -1247,7 +1258,12 @@ export function BoardEditorPage() {
           <textarea
             autoFocus
             value={editingText.text}
-            onChange={(e) => setEditingText({ ...editingText, text: e.target.value })}
+            onChange={(e) => {
+              const newText = e.target.value;
+              setEditingText({ ...editingText, text: newText });
+              // Update in real-time
+              updateElement(editingText.id, { text: newText });
+            }}
             onBlur={commitTextEditing}
             onKeyDown={(e) => {
               if (e.key === 'Escape') {
@@ -1260,6 +1276,7 @@ export function BoardEditorPage() {
               }
               e.stopPropagation();
             }}
+            placeholder="Type text..."
             style={{
               position: 'absolute',
               left: textEditorScreenPos.left,
@@ -1267,19 +1284,19 @@ export function BoardEditorPage() {
               fontSize: editingText.fontSize * zoom,
               fontFamily: 'Inter, sans-serif',
               color: strokeColor,
-              border: '1px solid #f472b6',
+              border: '2px solid #f472b6',
               borderRadius: 4,
-              padding: 2,
+              padding: 4,
               margin: 0,
-              background: 'rgba(255, 255, 255, 0.95)',
+              background: 'rgba(255, 255, 255, 0.98)',
               outline: 'none',
               resize: 'none',
               overflow: 'hidden',
               whiteSpace: 'pre',
-              minWidth: 40,
+              minWidth: 100,
               minHeight: editingText.fontSize * zoom * 1.4,
               lineHeight: 1.2,
-              boxShadow: '0 2px 8px rgba(244, 114, 182, 0.2)',
+              boxShadow: '0 4px 12px rgba(244, 114, 182, 0.3)',
               zIndex: 100,
             }}
             rows={1}
