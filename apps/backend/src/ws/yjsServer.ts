@@ -32,11 +32,44 @@ class BoardDoc {
   doc: Y.Doc;
   awareness: awarenessProtocol.Awareness;
   connections = new Map<WebSocket, ClientInfo>();
+  connectionClientIds = new Map<WebSocket, Set<number>>();
   persistTimer: NodeJS.Timeout | null = null;
 
   constructor(public boardId: string) {
     this.doc = new Y.Doc();
     this.awareness = new awarenessProtocol.Awareness(this.doc);
+
+    this.doc.on('update', (update: Uint8Array, origin: unknown) => {
+      const encoder = encoding.createEncoder();
+      encoding.writeVarUint(encoder, messageSync);
+      syncProtocol.writeUpdate(encoder, update);
+      const message = encoding.toUint8Array(encoder);
+      const originConn = origin instanceof WebSocket ? origin : null;
+      this.broadcast(message, originConn);
+      this.schedulePersistence();
+    });
+
+    this.awareness.on('update', ({ added, updated, removed }, origin) => {
+      const changedClients = [...added, ...updated, ...removed];
+      if (changedClients.length === 0) return;
+
+      const originConn = origin instanceof WebSocket ? origin : null;
+      if (originConn) {
+        const clientIds = this.connectionClientIds.get(originConn) ?? new Set<number>();
+        for (const clientId of added) clientIds.add(clientId);
+        for (const clientId of updated) clientIds.add(clientId);
+        for (const clientId of removed) clientIds.delete(clientId);
+        this.connectionClientIds.set(originConn, clientIds);
+      }
+
+      const encoder = encoding.createEncoder();
+      encoding.writeVarUint(encoder, messageAwareness);
+      encoding.writeVarUint8Array(
+        encoder,
+        awarenessProtocol.encodeAwarenessUpdate(this.awareness, changedClients),
+      );
+      this.broadcast(encoding.toUint8Array(encoder), originConn);
+    });
   }
 
   async loadFromDatabase() {
@@ -86,6 +119,15 @@ class BoardDoc {
   cleanup() {
     if (this.persistTimer) clearTimeout(this.persistTimer);
   }
+
+  broadcast(message: Uint8Array, origin: WebSocket | null = null) {
+    for (const [conn] of this.connections) {
+      if (origin && conn === origin) continue;
+      if (conn.readyState === wsReadyStateOpen) {
+        send(conn, message);
+      }
+    }
+  }
 }
 
 const docs = new Map<string, BoardDoc>();
@@ -114,11 +156,9 @@ function messageListener(conn: WebSocket, bdoc: BoardDoc, message: Uint8Array) {
       if (encoding.length(encoder) > 1) {
         send(conn, encoding.toUint8Array(encoder));
       }
-      bdoc.schedulePersistence();
       break;
     case messageAwareness: {
       awarenessProtocol.applyAwarenessUpdate(bdoc.awareness, decoding.readVarUint8Array(decoder), conn);
-      broadcastToConnections(bdoc, message, conn);
       break;
     }
     case messageQueryAwareness:
@@ -157,14 +197,6 @@ function handleJsonMessage(conn: WebSocket, bdoc: BoardDoc, json: any) {
   }
 }
 
-function broadcastToConnections(bdoc: BoardDoc, message: Uint8Array, origin: WebSocket) {
-  for (const [conn] of bdoc.connections) {
-    if (conn !== origin && conn.readyState === wsReadyStateOpen) {
-      send(conn, message);
-    }
-  }
-}
-
 function send(conn: WebSocket, message: Uint8Array) {
   if (conn.readyState === wsReadyStateOpen) {
     conn.send(message);
@@ -173,6 +205,7 @@ function send(conn: WebSocket, message: Uint8Array) {
 
 function setupConnection(ws: WebSocket, bdoc: BoardDoc, clientInfo: ClientInfo) {
   bdoc.connections.set(ws, clientInfo);
+  bdoc.connectionClientIds.set(ws, new Set<number>());
 
   // Send sync step 1
   const encoder = encoding.createEncoder();
@@ -191,15 +224,30 @@ function setupConnection(ws: WebSocket, bdoc: BoardDoc, clientInfo: ClientInfo) 
 }
 
 export function startYjsServer(): WebSocketServer {
-  const wss = new WebSocketServer({ port: config.yjs.wsPort, path: '/yjs' });
+  const wss = new WebSocketServer({ port: config.yjs.wsPort });
 
   wss.on('connection', async (ws: WebSocket, req: any) => {
     const url = new URL(req.url ?? '', `http://localhost:${config.yjs.wsPort}`);
+    const pathname = url.pathname.replace(/\/+$/, '');
+    if (pathname !== '/yjs' && !pathname.startsWith('/yjs/')) {
+      ws.close(4000, 'Invalid WebSocket path');
+      return;
+    }
+
+    const roomBoardId = pathname.startsWith('/yjs/')
+      ? decodeURIComponent(pathname.slice('/yjs/'.length)).replace(/^board-/, '')
+      : null;
     const boardId = url.searchParams.get('board');
     const token = url.searchParams.get('token');
 
-    if (!boardId || !token) {
+    if ((!boardId && !roomBoardId) || !token) {
       ws.close(4001, 'Missing board or token');
+      return;
+    }
+
+    const resolvedBoardId = boardId ?? roomBoardId;
+    if (!resolvedBoardId) {
+      ws.close(4001, 'Missing board');
       return;
     }
 
@@ -209,13 +257,13 @@ export function startYjsServer(): WebSocketServer {
       return;
     }
 
-    const board = await getBoardById(boardId, payload.sub);
+    const board = await getBoardById(resolvedBoardId, payload.sub);
     if (!board) {
       ws.close(4004, 'Board not found or access denied');
       return;
     }
 
-    const bdoc = await getOrCreateDoc(boardId);
+    const bdoc = await getOrCreateDoc(resolvedBoardId);
     const clientInfo: ClientInfo = {
       userId: payload.sub,
       name: payload.name,
@@ -226,8 +274,8 @@ export function startYjsServer(): WebSocketServer {
     setupConnection(ws, bdoc, clientInfo);
 
     // Redis pub/sub for cross-process cursor/presence
-    const cursorChannel = CHANNELS.cursors(boardId);
-    const presenceChannel = CHANNELS.presence(boardId);
+    const cursorChannel = CHANNELS.cursors(resolvedBoardId);
+    const presenceChannel = CHANNELS.presence(resolvedBoardId);
     subRedis.subscribe(cursorChannel, presenceChannel);
 
     const redisHandler = (channel: string, message: string) => {
@@ -237,7 +285,7 @@ export function startYjsServer(): WebSocketServer {
     };
     subRedis.on('message', redisHandler);
 
-    logger.info({ boardId, userId: payload.sub, email: payload.email }, 'Yjs client connected');
+    logger.info({ boardId: resolvedBoardId, userId: payload.sub, email: payload.email }, 'Yjs client connected');
 
     ws.on('message', (data: Buffer) => {
       messageListener(ws, bdoc, new Uint8Array(data));
@@ -245,23 +293,27 @@ export function startYjsServer(): WebSocketServer {
 
     ws.on('close', () => {
       bdoc.connections.delete(ws);
+      const controlledIds = bdoc.connectionClientIds.get(ws);
+      bdoc.connectionClientIds.delete(ws);
       subRedis.off('message', redisHandler);
 
       // Remove awareness state for this client
-      awarenessProtocol.removeAwarenessStates(bdoc.awareness, Array.from(bdoc.awareness.getStates().keys()), ws);
+      if (controlledIds && controlledIds.size > 0) {
+        awarenessProtocol.removeAwarenessStates(bdoc.awareness, Array.from(controlledIds), ws);
+      }
 
-      logger.info({ boardId, userId: payload.sub }, 'Yjs client disconnected');
+      logger.info({ boardId: resolvedBoardId, userId: payload.sub }, 'Yjs client disconnected');
 
       if (bdoc.connections.size === 0) {
         bdoc.persist().then(() => {
           bdoc.cleanup();
-          docs.delete(boardId);
+          docs.delete(resolvedBoardId);
         });
       }
     });
 
     ws.on('error', (err) => {
-      logger.error({ err, boardId }, 'WebSocket error');
+      logger.error({ err, boardId: resolvedBoardId }, 'WebSocket error');
     });
   });
 

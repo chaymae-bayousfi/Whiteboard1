@@ -36,6 +36,7 @@ export function useCollaboration({
   const providerRef = useRef<WebsocketProvider | null>(null);
   const ymapRef = useRef<Y.Map<unknown> | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const [onlineUsers, setOnlineUsers] = useState<CollabUser[]>([]);
   const [cursors, setCursors] = useState<CursorPosition[]>([]);
   const cursorColorRef = useRef<string>(
@@ -45,18 +46,39 @@ export function useCollaboration({
   );
 
   useEffect(() => {
+    if (!boardId || !token || !user.id) {
+      setIsConnected(false);
+      setConnectionStatus('disconnected');
+      setOnlineUsers([]);
+      setCursors([]);
+      return;
+    }
+
     const ydoc = new Y.Doc();
     ydocRef.current = ydoc;
     const ymap = ydoc.getMap('shapes');
     ymapRef.current = ymap;
 
-    const provider = new WebsocketProvider(WS_URL, `board-${boardId}?board=${boardId}&token=${token}`, ydoc, {
-      WebSocketPolyfill: undefined as any,
+    const provider = new WebsocketProvider(WS_URL, `board-${boardId}`, ydoc, {
+      params: {
+        board: boardId,
+        token,
+      },
     });
     providerRef.current = provider;
+    setConnectionStatus('connecting');
 
     provider.on('status', (event: { status: string }) => {
-      setIsConnected(event.status === 'connected');
+      const connected = event.status === 'connected';
+      setIsConnected(connected);
+      setConnectionStatus(connected ? 'connected' : 'disconnected');
+      if (connected) {
+        provider.awareness.setLocalStateField('user', {
+          userId: user.id,
+          name: user.name,
+          color: cursorColorRef.current,
+        });
+      }
     });
 
     // Sync shapes from Yjs to React
@@ -111,17 +133,23 @@ export function useCollaboration({
     };
 
     awareness.on('change', onAwarenessChange);
+    onAwarenessChange();
 
     return () => {
       ymap.unobserve(syncElements);
+      awareness.off('change', onAwarenessChange);
+      awareness.setLocalState(null);
       provider.destroy();
       ydoc.destroy();
       ydocRef.current = null;
       providerRef.current = null;
       ymapRef.current = null;
+      setOnlineUsers([]);
+      setCursors([]);
+      setIsConnected(false);
+      setConnectionStatus('disconnected');
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boardId, token]);
+  }, [boardId, token, user.id, user.name, onElementsChange]);
 
   // Update elements in Yjs
   const updateElement = useCallback((element: CanvasElement) => {
@@ -186,6 +214,7 @@ export function useCollaboration({
 
   return {
     isConnected,
+    connectionStatus,
     onlineUsers,
     cursors,
     updateElement,
