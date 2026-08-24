@@ -49,7 +49,12 @@ class BoardDoc {
       this.schedulePersistence();
     });
 
-    this.awareness.on('update', ({ added, updated, removed }, origin) => {
+    this.awareness.on(
+      'update',
+      (
+        { added, updated, removed }: { added: number[]; updated: number[]; removed: number[] },
+        origin: unknown,
+      ) => {
       const changedClients = [...added, ...updated, ...removed];
       if (changedClients.length === 0) return;
 
@@ -69,7 +74,8 @@ class BoardDoc {
         awarenessProtocol.encodeAwarenessUpdate(this.awareness, changedClients),
       );
       this.broadcast(encoding.toUint8Array(encoder), originConn);
-    });
+      },
+    );
   }
 
   async loadFromDatabase() {
