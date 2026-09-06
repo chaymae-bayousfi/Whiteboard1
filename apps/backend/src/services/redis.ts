@@ -22,4 +22,6 @@ export const subRedis = redis.duplicate();
 export const CHANNELS = {
   cursors: (boardId: string) => `board:${boardId}:cursors`,
   presence: (boardId: string) => `board:${boardId}:presence`,
+  yjs: (boardId: string) => `board:${boardId}:yjs`,
+  awareness: (boardId: string) => `board:${boardId}:awareness`,
 } as const;

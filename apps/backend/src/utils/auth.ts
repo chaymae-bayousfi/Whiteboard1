@@ -42,6 +42,7 @@ export async function signRefreshToken(payload: Omit<JwtPayload, 'type'>): Promi
 export async function verifyAccessToken(token: string): Promise<JwtPayload | null> {
   try {
     const { payload } = await jwtVerify(token, encoder.encode(config.jwt.accessSecret));
+    if (payload.type !== 'access' || typeof payload.sub !== 'string') return null;
     return payload as unknown as JwtPayload;
   } catch {
     return null;
@@ -51,6 +52,7 @@ export async function verifyAccessToken(token: string): Promise<JwtPayload | nul
 export async function verifyRefreshToken(token: string): Promise<JwtPayload | null> {
   try {
     const { payload } = await jwtVerify(token, encoder.encode(config.jwt.refreshSecret));
+    if (payload.type !== 'refresh' || typeof payload.sub !== 'string') return null;
     return payload as unknown as JwtPayload;
   } catch {
     return null;

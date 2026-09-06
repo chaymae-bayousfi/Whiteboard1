@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Plus, Search, Trash2, Clock } from 'lucide-react';
@@ -29,11 +29,7 @@ export function DashboardPage() {
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
   const [selectedBoard, setSelectedBoard] = useState<Board | null>(null);
 
-  useEffect(() => {
-    loadBoards();
-  }, []);
-
-  const loadBoards = async () => {
+  const loadBoards = useCallback(async () => {
     setIsLoading(true);
     try {
       const boards = await boardService.getBoards();
@@ -47,7 +43,11 @@ export function DashboardPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [addToast, setBoards]);
+
+  useEffect(() => {
+    void loadBoards();
+  }, [loadBoards]);
 
   const handleCreateBoard = async (data: CreateBoardDto) => {
     try {

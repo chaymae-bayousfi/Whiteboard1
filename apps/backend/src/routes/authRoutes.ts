@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { registerUser, loginUser, refreshSession, logoutSession, getUserById } from '@/services/authService';
 import { authenticate } from '@/middleware/authenticate';
+import { getAppError } from '@/utils/errors';
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -27,9 +28,9 @@ export async function authRoutes(app: FastifyInstance) {
     try {
       const result = await registerUser(parsed.data.email, parsed.data.name, parsed.data.password);
       return reply.code(201).send(result);
-    } catch (err: any) {
-      const code = err.statusCode ?? 500;
-      return reply.code(code).send({ error: err.message ?? 'Registration failed' });
+    } catch (err: unknown) {
+      const appError = getAppError(err, 'Registration failed');
+      return reply.code(appError.statusCode).send({ error: appError.message });
     }
   });
 
@@ -41,9 +42,9 @@ export async function authRoutes(app: FastifyInstance) {
     try {
       const result = await loginUser(parsed.data.email, parsed.data.password);
       return reply.send(result);
-    } catch (err: any) {
-      const code = err.statusCode ?? 500;
-      return reply.code(code).send({ error: err.message ?? 'Login failed' });
+    } catch (err: unknown) {
+      const appError = getAppError(err, 'Login failed');
+      return reply.code(appError.statusCode).send({ error: appError.message });
     }
   });
 
@@ -55,9 +56,9 @@ export async function authRoutes(app: FastifyInstance) {
     try {
       const result = await refreshSession(parsed.data.refreshToken);
       return reply.send(result);
-    } catch (err: any) {
-      const code = err.statusCode ?? 500;
-      return reply.code(code).send({ error: err.message ?? 'Token refresh failed' });
+    } catch (err: unknown) {
+      const appError = getAppError(err, 'Token refresh failed');
+      return reply.code(appError.statusCode).send({ error: appError.message });
     }
   });
 

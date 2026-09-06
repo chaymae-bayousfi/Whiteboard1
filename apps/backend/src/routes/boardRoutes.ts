@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { authenticate } from '@/middleware/authenticate';
+import { getAppError } from '@/utils/errors';
 import {
   getUserBoards,
   getBoardById,
@@ -14,18 +15,21 @@ import {
   getSnapshots,
   getSnapshotData,
   getBoardShapes,
+  canEditBoard,
 } from '@/services/boardService';
 
 const createBoardSchema = z.object({
   title: z.string().min(1).max(100),
   description: z.string().max(500).optional(),
   isPublic: z.boolean().optional(),
+  publicPermission: z.enum(['view', 'edit']).optional(),
 });
 
 const updateBoardSchema = z.object({
   title: z.string().min(1).max(100).optional(),
   description: z.string().max(500).nullable().optional(),
   isPublic: z.boolean().optional(),
+  publicPermission: z.enum(['view', 'edit']).optional(),
 });
 
 const shareSchema = z.object({
@@ -38,7 +42,9 @@ const updateMemberSchema = z.object({
 });
 
 const snapshotSchema = z.object({
-  data: z.string().min(1),
+  data: z.string().min(1).max(5 * 1024 * 1024).refine((value) => {
+    try { JSON.parse(value); return true; } catch { return false; }
+  }, 'Snapshot data must be valid JSON'),
 });
 
 export async function boardRoutes(app: FastifyInstance) {
@@ -54,7 +60,13 @@ export async function boardRoutes(app: FastifyInstance) {
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Validation failed', details: parsed.error.flatten() });
     }
-    const board = await createBoard(request.user!.sub, parsed.data.title, parsed.data.description);
+    const board = await createBoard(
+      request.user!.sub,
+      parsed.data.title,
+      parsed.data.description,
+      parsed.data.isPublic,
+      parsed.data.publicPermission,
+    );
     return reply.code(201).send({ board });
   });
 
@@ -74,9 +86,9 @@ export async function boardRoutes(app: FastifyInstance) {
     try {
       const board = await updateBoard(id, request.user!.sub, parsed.data);
       return reply.send({ board });
-    } catch (err: any) {
-      const code = err.statusCode ?? 500;
-      return reply.code(code).send({ error: err.message ?? 'Update failed' });
+    } catch (err: unknown) {
+      const appError = getAppError(err, 'Update failed');
+      return reply.code(appError.statusCode).send({ error: appError.message });
     }
   });
 
@@ -85,9 +97,9 @@ export async function boardRoutes(app: FastifyInstance) {
     try {
       await deleteBoard(id, request.user!.sub);
       return reply.send({ success: true });
-    } catch (err: any) {
-      const code = err.statusCode ?? 500;
-      return reply.code(code).send({ error: err.message ?? 'Delete failed' });
+    } catch (err: unknown) {
+      const appError = getAppError(err, 'Delete failed');
+      return reply.code(appError.statusCode).send({ error: appError.message });
     }
   });
 
@@ -108,9 +120,9 @@ export async function boardRoutes(app: FastifyInstance) {
     try {
       const result = await shareBoard(id, request.user!.sub, parsed.data.email, parsed.data.permission);
       return reply.send(result);
-    } catch (err: any) {
-      const code = err.statusCode ?? 500;
-      return reply.code(code).send({ error: err.message ?? 'Share failed' });
+    } catch (err: unknown) {
+      const appError = getAppError(err, 'Share failed');
+      return reply.code(appError.statusCode).send({ error: appError.message });
     }
   });
 
@@ -123,9 +135,9 @@ export async function boardRoutes(app: FastifyInstance) {
     try {
       const member = await updateMemberPermission(id, request.user!.sub, userId, parsed.data.permission);
       return reply.send({ member });
-    } catch (err: any) {
-      const code = err.statusCode ?? 500;
-      return reply.code(code).send({ error: err.message ?? 'Update failed' });
+    } catch (err: unknown) {
+      const appError = getAppError(err, 'Update failed');
+      return reply.code(appError.statusCode).send({ error: appError.message });
     }
   });
 
@@ -134,9 +146,9 @@ export async function boardRoutes(app: FastifyInstance) {
     try {
       await removeMember(id, request.user!.sub, userId);
       return reply.send({ success: true });
-    } catch (err: any) {
-      const code = err.statusCode ?? 500;
-      return reply.code(code).send({ error: err.message ?? 'Remove failed' });
+    } catch (err: unknown) {
+      const appError = getAppError(err, 'Remove failed');
+      return reply.code(appError.statusCode).send({ error: appError.message });
     }
   });
 
@@ -156,11 +168,15 @@ export async function boardRoutes(app: FastifyInstance) {
     }
     const board = await getBoardById(id, request.user!.sub);
     if (!board) return reply.code(404).send({ error: 'Board not found or access denied' });
+    if (!canEditBoard(board.permission as 'owner' | 'admin' | 'edit' | 'view')) {
+      return reply.code(403).send({ error: 'Edit permission required' });
+    }
     try {
       const snapshot = await saveSnapshot(id, request.user!.sub, parsed.data.data);
       return reply.code(201).send({ snapshot });
-    } catch (err: any) {
-      return reply.code(500).send({ error: err.message ?? 'Snapshot failed' });
+    } catch (err: unknown) {
+      const appError = getAppError(err, 'Snapshot failed');
+      return reply.code(appError.statusCode).send({ error: appError.message });
     }
   });
 

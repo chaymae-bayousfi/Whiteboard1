@@ -30,6 +30,7 @@ interface BoardLayoutProps {
   onExportPNG?: () => void;
   onExportJSON?: () => void;
   onImportJSON?: (elements: CanvasElement[]) => void;
+  readOnly?: boolean;
 }
 
 export function BoardLayout({
@@ -44,6 +45,7 @@ export function BoardLayout({
   onExportPNG,
   onExportJSON,
   onImportJSON,
+  readOnly = false,
 }: BoardLayoutProps) {
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [isShareOpen, setIsShareOpen] = useState(false);
@@ -69,10 +71,16 @@ export function BoardLayout({
     input.click();
   };
 
-  const allOnlineUsers = [
-    { id: user?.id ?? '', name: user?.name ?? 'You', avatar: user?.avatar },
-    ...onlineUsers.map((u) => ({ id: u.id, name: u.name, avatar: u.avatar })),
-  ];
+  const visibleOnlineUsers = onlineUsers.filter((onlineUser, index, users) => (
+    users.findIndex((candidate) => candidate.id === onlineUser.id) === index
+  ));
+  const allOnlineUsers = user && !visibleOnlineUsers.some((onlineUser) => onlineUser.id === user.id)
+    ? [{ id: user.id, name: user.name, avatar: user.avatar }, ...visibleOnlineUsers]
+    : visibleOnlineUsers.map((onlineUser) => ({
+      id: onlineUser.id,
+      name: onlineUser.name,
+      avatar: onlineUser.avatar,
+    }));
 
   return (
     <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
@@ -103,6 +111,22 @@ export function BoardLayout({
           <div className="hidden sm:block">
             <ConnectionStatus status={connectionStatus} />
           </div>
+
+          {readOnly && (
+            <div className="hidden sm:flex items-center gap-2">
+              <span className="inline-flex items-center px-2.5 py-1 text-xs font-medium text-gray-600 bg-gray-100 rounded-full">
+                Read-only
+              </span>
+              {!user && (
+                <Link
+                  to={`/login?returnTo=${encodeURIComponent(window.location.pathname)}`}
+                  className="text-xs font-medium text-blush-600 hover:text-blush-700"
+                >
+                  Sign in to edit
+                </Link>
+              )}
+            </div>
+          )}
 
           <OnlineUsersList users={allOnlineUsers} currentUserId={user?.id} />
 
@@ -181,14 +205,14 @@ export function BoardLayout({
         </div>
       </header>
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 min-h-0 flex overflow-hidden">
         {leftToolbar && (
           <aside className="shrink-0 w-14 bg-white border-r border-gray-200 flex flex-col items-center py-3 gap-1 z-10 overflow-y-auto">
             {leftToolbar}
           </aside>
         )}
 
-        <div className="flex-1 relative overflow-hidden">
+        <div className="flex-1 min-w-0 min-h-0 relative overflow-hidden">
           {children}
           {bottomBar}
         </div>

@@ -1,8 +1,7 @@
 import { prisma } from '@/config/prisma';
-import { signAccessToken, signRefreshToken, hashPassword, verifyPassword } from '@/utils/auth';
+import { signAccessToken, signRefreshToken, verifyRefreshToken, hashPassword, verifyPassword } from '@/utils/auth';
 import { config } from '@/config/env';
 import { logger } from '@/config/logger';
-import { randomUUID } from 'crypto';
 
 export interface AuthResult {
   user: { id: string; email: string; name: string; avatarColor: string };
@@ -67,12 +66,14 @@ export async function loginUser(email: string, password: string): Promise<AuthRe
 }
 
 export async function refreshSession(refreshToken: string): Promise<AuthResult> {
+  const tokenPayload = await verifyRefreshToken(refreshToken);
+  if (!tokenPayload) throw { statusCode: 401, message: 'Invalid or expired refresh token' };
   const record = await prisma.refreshToken.findUnique({
     where: { token: refreshToken },
     include: { user: true },
   });
 
-  if (!record || record.revokedAt || record.expiresAt < new Date()) {
+  if (!record || record.userId !== tokenPayload.sub || record.revokedAt || record.expiresAt < new Date()) {
     throw { statusCode: 401, message: 'Invalid or expired refresh token' };
   }
 

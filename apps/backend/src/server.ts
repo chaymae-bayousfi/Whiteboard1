@@ -9,6 +9,7 @@ import { boardRoutes } from '@/routes/boardRoutes';
 import { startYjsServer } from '@/ws/yjsServer';
 import { ensureBucket } from '@/services/minio';
 import { prisma } from '@/config/prisma';
+import { getPublicBoardById } from '@/services/boardService';
 
 async function start() {
   const app = Fastify({
@@ -47,6 +48,13 @@ async function start() {
 
   // Health check
   app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
+
+  app.get('/api/v1/boards/:id/public', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const board = await getPublicBoardById(id);
+    if (!board) return reply.code(404).send({ error: 'Public board not found' });
+    return reply.send({ board });
+  });
 
   // API routes
   await app.register(

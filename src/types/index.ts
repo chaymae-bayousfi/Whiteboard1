@@ -37,6 +37,7 @@ export interface Board {
   collaborators: BoardCollaborator[];
   members?: BoardMember[];
   isPublic: boolean;
+  publicPermission?: 'view' | 'edit';
   shapeCount?: number;
   permission?: string;
   createdAt: string;
@@ -61,11 +62,15 @@ export interface BoardCollaborator {
 export interface CreateBoardDto {
   title: string;
   description?: string;
+  isPublic?: boolean;
+  publicPermission?: 'view' | 'edit';
 }
 
 export interface UpdateBoardDto {
   title?: string;
   description?: string;
+  isPublic?: boolean;
+  publicPermission?: 'view' | 'edit';
 }
 
 export type ToolType =

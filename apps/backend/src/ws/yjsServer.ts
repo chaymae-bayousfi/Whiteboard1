@@ -1,4 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws';
+import { randomUUID } from 'crypto';
 import * as Y from 'yjs';
 import * as syncProtocol from 'y-protocols/sync';
 import * as awarenessProtocol from 'y-protocols/awareness';
@@ -9,17 +10,14 @@ import { logger } from '@/config/logger';
 import { verifyAccessToken } from '@/utils/auth';
 import { prisma } from '@/config/prisma';
 import { pubRedis, subRedis, CHANNELS } from '@/services/redis';
-import { getBoardById, upsertShape, deleteShape } from '@/services/boardService';
-import { uploadSnapshot } from '@/services/minio';
+import { getBoardById, getPublicBoardById, canEditBoard, upsertShape, deleteShape } from '@/services/boardService';
 
-const wsReadyStateConnecting = 0;
 const wsReadyStateOpen = 1;
-const wsReadyStateClosing = 2;
-const wsReadyStateClosed = 3;
 
 const messageSync = 0;
 const messageAwareness = 1;
 const messageQueryAwareness = 3;
+const syncMessageUpdate = 2;
 
 interface ClientInfo {
   userId: string;
@@ -28,12 +26,16 @@ interface ClientInfo {
   color: string;
 }
 
+type ShapeValue = Record<string, unknown> & { id?: string; type?: string };
+
 class BoardDoc {
   doc: Y.Doc;
   awareness: awarenessProtocol.Awareness;
   connections = new Map<WebSocket, ClientInfo>();
   connectionClientIds = new Map<WebSocket, Set<number>>();
   persistTimer: NodeJS.Timeout | null = null;
+  redisUpdateHandler: ((channel: string, message: string) => void) | null = null;
+  redisAwarenessHandler: ((channel: string, message: string) => void) | null = null;
 
   constructor(public boardId: string) {
     this.doc = new Y.Doc();
@@ -46,6 +48,9 @@ class BoardDoc {
       const message = encoding.toUint8Array(encoder);
       const originConn = origin instanceof WebSocket ? origin : null;
       this.broadcast(message, originConn);
+      if (origin !== 'redis' && origin !== 'database') {
+        void pubRedis.publish(CHANNELS.yjs(this.boardId), Buffer.from(update).toString('base64'));
+      }
       this.schedulePersistence();
     });
 
@@ -74,6 +79,12 @@ class BoardDoc {
         awarenessProtocol.encodeAwarenessUpdate(this.awareness, changedClients),
       );
       this.broadcast(encoding.toUint8Array(encoder), originConn);
+      if (origin !== 'redis') {
+        void pubRedis.publish(
+          CHANNELS.awareness(this.boardId),
+          Buffer.from(awarenessProtocol.encodeAwarenessUpdate(this.awareness, changedClients)).toString('base64'),
+        );
+      }
       },
     );
   }
@@ -102,10 +113,14 @@ class BoardDoc {
   async persist() {
     try {
       const ymap = this.doc.getMap('shapes');
-      const entries = Array.from(ymap.entries()) as [string, any][];
+      const entries = Array.from(ymap.entries()) as [string, ShapeValue][];
 
       for (const [elementId, shape] of entries) {
-        const { id, type, ...rest } = shape;
+        const rest = { ...shape };
+        delete rest.id;
+        const type = rest.type;
+        delete rest.type;
+        if (typeof type !== 'string') continue;
         await upsertShape(this.boardId, elementId, type, rest);
       }
 
@@ -124,6 +139,46 @@ class BoardDoc {
 
   cleanup() {
     if (this.persistTimer) clearTimeout(this.persistTimer);
+    if (this.redisUpdateHandler) {
+      subRedis.off('message', this.redisUpdateHandler);
+      this.redisUpdateHandler = null;
+      void subRedis.unsubscribe(CHANNELS.yjs(this.boardId));
+    }
+    if (this.redisAwarenessHandler) {
+      subRedis.off('message', this.redisAwarenessHandler);
+      this.redisAwarenessHandler = null;
+      void subRedis.unsubscribe(CHANNELS.awareness(this.boardId));
+    }
+  }
+
+  subscribeToRedis() {
+    const channel = CHANNELS.yjs(this.boardId);
+    this.redisUpdateHandler = (receivedChannel, message) => {
+      if (receivedChannel !== channel) return;
+      try {
+        Y.applyUpdate(this.doc, new Uint8Array(Buffer.from(message, 'base64')), 'redis');
+      } catch (err) {
+        logger.warn({ err, boardId: this.boardId }, 'Invalid Redis Yjs update ignored');
+      }
+    };
+    subRedis.on('message', this.redisUpdateHandler);
+    void subRedis.subscribe(channel);
+
+    const awarenessChannel = CHANNELS.awareness(this.boardId);
+    this.redisAwarenessHandler = (receivedChannel, message) => {
+      if (receivedChannel !== awarenessChannel) return;
+      try {
+        awarenessProtocol.applyAwarenessUpdate(
+          this.awareness,
+          new Uint8Array(Buffer.from(message, 'base64')),
+          'redis',
+        );
+      } catch (err) {
+        logger.warn({ err, boardId: this.boardId }, 'Invalid Redis Awareness update ignored');
+      }
+    };
+    subRedis.on('message', this.redisAwarenessHandler);
+    void subRedis.subscribe(awarenessChannel);
   }
 
   broadcast(message: Uint8Array, origin: WebSocket | null = null) {
@@ -144,12 +199,15 @@ async function getOrCreateDoc(boardId: string): Promise<BoardDoc> {
     bdoc = new BoardDoc(boardId);
     docs.set(boardId, bdoc);
     await bdoc.loadFromDatabase();
+    bdoc.subscribeToRedis();
   }
   return bdoc;
 }
 
-function messageListener(conn: WebSocket, bdoc: BoardDoc, message: Uint8Array) {
+function messageListener(conn: WebSocket, bdoc: BoardDoc, message: Uint8Array, canEdit: boolean) {
   if (message.length === 0) return;
+
+  try {
 
   const encoder = encoding.createEncoder();
   const decoder = decoding.createDecoder(message);
@@ -157,6 +215,12 @@ function messageListener(conn: WebSocket, bdoc: BoardDoc, message: Uint8Array) {
 
   switch (messageType) {
     case messageSync:
+      if (!canEdit) {
+        const syncDecoder = decoding.createDecoder(message);
+        decoding.readVarUint(syncDecoder);
+        const syncMessageType = decoding.readVarUint(syncDecoder);
+        if (syncMessageType === syncMessageUpdate) return;
+      }
       encoding.writeVarUint(encoder, messageSync);
       syncProtocol.readSyncMessage(decoder, encoder, bdoc.doc, conn);
       if (encoding.length(encoder) > 1) {
@@ -184,18 +248,25 @@ function messageListener(conn: WebSocket, bdoc: BoardDoc, message: Uint8Array) {
         // ignore
       }
   }
+  } catch (err) {
+    logger.warn({ err, boardId: bdoc.boardId }, 'Malformed WebSocket message rejected');
+    conn.close(4002, 'Malformed protocol message');
+  }
 }
 
-function handleJsonMessage(conn: WebSocket, bdoc: BoardDoc, json: any) {
+function handleJsonMessage(conn: WebSocket, bdoc: BoardDoc, json: unknown) {
   const client = bdoc.connections.get(conn);
   if (!client) return;
 
-  if (json.type === 'cursor') {
+  if (typeof json !== 'object' || json === null || !('type' in json)) return;
+  const message = json as { type: unknown };
+
+  if (message.type === 'cursor') {
     pubRedis.publish(
       CHANNELS.cursors(bdoc.boardId),
       JSON.stringify({ ...json, userId: client.userId, name: client.name, color: client.color }),
     );
-  } else if (json.type === 'presence') {
+  } else if (message.type === 'presence') {
     pubRedis.publish(
       CHANNELS.presence(bdoc.boardId),
       JSON.stringify({ ...json, userId: client.userId, name: client.name, color: client.color }),
@@ -232,7 +303,7 @@ function setupConnection(ws: WebSocket, bdoc: BoardDoc, clientInfo: ClientInfo) 
 export function startYjsServer(): WebSocketServer {
   const wss = new WebSocketServer({ port: config.yjs.wsPort });
 
-  wss.on('connection', async (ws: WebSocket, req: any) => {
+  wss.on('connection', async (ws: WebSocket, req: import('http').IncomingMessage) => {
     const url = new URL(req.url ?? '', `http://localhost:${config.yjs.wsPort}`);
     const pathname = url.pathname.replace(/\/+$/, '');
     if (pathname !== '/yjs' && !pathname.startsWith('/yjs/')) {
@@ -246,7 +317,7 @@ export function startYjsServer(): WebSocketServer {
     const boardId = url.searchParams.get('board');
     const token = url.searchParams.get('token');
 
-    if ((!boardId && !roomBoardId) || !token) {
+    if (!boardId && !roomBoardId) {
       ws.close(4001, 'Missing board or token');
       return;
     }
@@ -257,13 +328,15 @@ export function startYjsServer(): WebSocketServer {
       return;
     }
 
-    const payload = await verifyAccessToken(token);
-    if (!payload) {
+    const payload = token ? await verifyAccessToken(token) : null;
+    if (token && !payload) {
       ws.close(4003, 'Invalid token');
       return;
     }
 
-    const board = await getBoardById(resolvedBoardId, payload.sub);
+    const board = payload
+      ? await getBoardById(resolvedBoardId, payload.sub)
+      : await getPublicBoardById(resolvedBoardId);
     if (!board) {
       ws.close(4004, 'Board not found or access denied');
       return;
@@ -271,44 +344,35 @@ export function startYjsServer(): WebSocketServer {
 
     const bdoc = await getOrCreateDoc(resolvedBoardId);
     const clientInfo: ClientInfo = {
-      userId: payload.sub,
-      name: payload.name,
-      email: payload.email,
+      userId: payload?.sub ?? `guest-${randomUUID()}`,
+      name: payload?.name ?? 'Guest viewer',
+      email: payload?.email ?? '',
       color: ['#f472b6', '#c084fc', '#fb7185', '#fbbf24', '#34d399', '#60a5fa'][Math.floor(Math.random() * 6)],
     };
 
     setupConnection(ws, bdoc, clientInfo);
 
-    // Redis pub/sub for cross-process cursor/presence
-    const cursorChannel = CHANNELS.cursors(resolvedBoardId);
-    const presenceChannel = CHANNELS.presence(resolvedBoardId);
-    subRedis.subscribe(cursorChannel, presenceChannel);
-
-    const redisHandler = (channel: string, message: string) => {
-      if ((channel === cursorChannel || channel === presenceChannel) && ws.readyState === wsReadyStateOpen) {
-        ws.send(message);
-      }
-    };
-    subRedis.on('message', redisHandler);
-
-    logger.info({ boardId: resolvedBoardId, userId: payload.sub, email: payload.email }, 'Yjs client connected');
+    logger.info({ boardId: resolvedBoardId, userId: clientInfo.userId }, 'Yjs client connected');
 
     ws.on('message', (data: Buffer) => {
-      messageListener(ws, bdoc, new Uint8Array(data));
+      messageListener(
+        ws,
+        bdoc,
+        new Uint8Array(data),
+        canEditBoard(board.permission as 'owner' | 'admin' | 'edit' | 'view'),
+      );
     });
 
     ws.on('close', () => {
       bdoc.connections.delete(ws);
       const controlledIds = bdoc.connectionClientIds.get(ws);
       bdoc.connectionClientIds.delete(ws);
-      subRedis.off('message', redisHandler);
-
       // Remove awareness state for this client
       if (controlledIds && controlledIds.size > 0) {
         awarenessProtocol.removeAwarenessStates(bdoc.awareness, Array.from(controlledIds), ws);
       }
 
-      logger.info({ boardId: resolvedBoardId, userId: payload.sub }, 'Yjs client disconnected');
+      logger.info({ boardId: resolvedBoardId, userId: clientInfo.userId }, 'Yjs client disconnected');
 
       if (bdoc.connections.size === 0) {
         bdoc.persist().then(() => {

@@ -1,8 +1,34 @@
 import { prisma } from '@/config/prisma';
 import { uploadSnapshot, getSnapshot, deleteSnapshot } from '@/services/minio';
-import { logger } from '@/config/logger';
+import { randomUUID } from 'crypto';
 
 export type Permission = 'owner' | 'admin' | 'edit' | 'view';
+export type PublicPermission = 'view' | 'edit';
+
+export function canEditBoard(permission: Permission | null | undefined): boolean {
+  return permission === 'owner' || permission === 'admin' || permission === 'edit';
+}
+
+interface BoardMemberRecord {
+  id: string;
+  userId: string;
+  permission: string;
+  user: unknown;
+}
+
+interface BoardRecord {
+  id: string;
+  title: string;
+  description: string | null;
+  isPublic: boolean;
+  publicPermission?: string;
+  ownerId: string;
+  owner?: unknown;
+  members?: BoardMemberRecord[];
+  _count?: { shapes: number };
+  createdAt: Date;
+  updatedAt: Date;
+}
 
 export async function getUserBoards(userId: string) {
   const [owned, member] = await Promise.all([
@@ -53,22 +79,46 @@ export async function getBoardById(boardId: string, userId: string) {
   return { ...serializeBoard(board), permission };
 }
 
+export async function getPublicBoardById(boardId: string) {
+  const board = await prisma.board.findUnique({
+    where: { id: boardId },
+    include: {
+      owner: { select: { id: true, name: true, avatarColor: true } },
+    },
+  });
+
+  if (!board || !board.isPublic) return null;
+  return {
+    ...serializeBoard(board),
+    members: [],
+    permission: (board.publicPermission === 'edit' ? 'edit' : 'view') as PublicPermission,
+  };
+}
+
 export function resolvePermission(
-  board: { ownerId: string; members: { userId: string; permission: string }[]; isPublic: boolean },
+  board: { ownerId: string; members: { userId: string; permission: string }[]; isPublic: boolean; publicPermission?: string },
   userId: string,
 ): Permission | null {
   if (board.ownerId === userId) return 'owner';
   const member = board.members.find((m) => m.userId === userId);
   if (member) return member.permission as Permission;
-  if (board.isPublic) return 'view';
+  if (board.isPublic) return board.publicPermission === 'edit' ? 'edit' : 'view';
   return null;
 }
 
-export async function createBoard(userId: string, title: string, description?: string) {
+export async function createBoard(
+  userId: string,
+  title: string,
+  description?: string,
+  isPublic = false,
+  publicPermission: PublicPermission = 'view',
+) {
   const board = await prisma.board.create({
     data: {
       title,
       description,
+      isPublic,
+      publicPermission,
       ownerId: userId,
     },
     include: {
@@ -79,7 +129,7 @@ export async function createBoard(userId: string, title: string, description?: s
   return serializeBoard(board);
 }
 
-export async function updateBoard(boardId: string, userId: string, data: { title?: string; description?: string; isPublic?: boolean }) {
+export async function updateBoard(boardId: string, userId: string, data: { title?: string; description?: string | null; isPublic?: boolean; publicPermission?: PublicPermission }) {
   const board = await prisma.board.findUnique({ where: { id: boardId } });
   if (!board) throw { statusCode: 404, message: 'Board not found' };
   if (board.ownerId !== userId) throw { statusCode: 403, message: 'Only the owner can update the board' };
@@ -161,7 +211,7 @@ export async function removeMember(boardId: string, ownerId: string, userId: str
 }
 
 export async function saveSnapshot(boardId: string, userId: string, jsonState: string) {
-  const key = `snapshots/${boardId}/${Date.now()}.json`;
+  const key = `snapshots/${boardId}/${Date.now()}-${randomUUID()}.json`;
   const { size } = await uploadSnapshot(key, jsonState);
   const snapshot = await prisma.snapshot.create({
     data: { boardId, key, size, createdBy: userId },
@@ -202,15 +252,16 @@ export async function deleteShape(boardId: string, elementId: string) {
   }
 }
 
-function serializeBoard(board: any) {
+function serializeBoard(board: BoardRecord) {
   return {
     id: board.id,
     title: board.title,
     description: board.description,
     isPublic: board.isPublic,
+    publicPermission: board.publicPermission as PublicPermission,
     ownerId: board.ownerId,
     owner: board.owner,
-    members: board.members?.map((m: any) => ({
+    members: board.members?.map((m) => ({
       id: m.id,
       userId: m.userId,
       permission: m.permission,

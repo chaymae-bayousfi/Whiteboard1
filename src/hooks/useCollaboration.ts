@@ -46,7 +46,7 @@ export function useCollaboration({
   );
 
   useEffect(() => {
-    if (!boardId || !token || !user.id) {
+    if (!boardId || !user.id) {
       setIsConnected(false);
       setConnectionStatus('disconnected');
       setOnlineUsers([]);
@@ -59,12 +59,9 @@ export function useCollaboration({
     const ymap = ydoc.getMap('shapes');
     ymapRef.current = ymap;
 
-    const provider = new WebsocketProvider(WS_URL, `board-${boardId}`, ydoc, {
-      params: {
-        board: boardId,
-        token,
-      },
-    });
+    const params: Record<string, string> = { board: boardId };
+    if (token) params.token = token;
+    const provider = new WebsocketProvider(WS_URL, `board-${boardId}`, ydoc, { params });
     providerRef.current = provider;
     setConnectionStatus('connecting');
 

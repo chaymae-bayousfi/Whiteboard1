@@ -10,6 +10,13 @@ function required(key: string, fallback?: string): string {
   return value;
 }
 
+function durationToMs(value: string): number {
+  const match = /^(\d+)([smhd])$/.exec(value);
+  if (!match) return 7 * 24 * 60 * 60 * 1000;
+  const units = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 } as const;
+  return Number(match[1]) * units[match[2] as keyof typeof units];
+}
+
 export const config = {
   port: parseInt(process.env.PORT ?? '4000', 10),
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -32,7 +39,7 @@ export const config = {
     refreshSecret: required('JWT_REFRESH_SECRET', 'dev-refresh-secret-change-me-32-chars-min!'),
     accessExpires: process.env.JWT_ACCESS_EXPIRES ?? '15m',
     refreshExpires: process.env.JWT_REFRESH_EXPIRES ?? '7d',
-    refreshExpiresMs: 7 * 24 * 60 * 60 * 1000,
+    refreshExpiresMs: durationToMs(process.env.JWT_REFRESH_EXPIRES ?? '7d'),
   },
 
   yjs: {

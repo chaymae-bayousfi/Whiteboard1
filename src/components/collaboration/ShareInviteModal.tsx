@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Copy, Check, Mail, Link as LinkIcon, Globe, Lock } from 'lucide-react';
 import { Button, Input, Toggle } from '../ui';
 import { Avatar } from '../ui/Avatar';
 import { copyToClipboard } from '@/utils';
 import type { Board, User, Permission } from '@/types';
+import { useBoardStore } from '@/stores';
 
 interface ShareModalProps {
   isOpen: boolean;
@@ -16,7 +17,16 @@ interface ShareModalProps {
 export function ShareModal({ isOpen, onClose, board, currentUser }: ShareModalProps) {
   const [copied, setCopied] = useState(false);
   const [isPublic, setIsPublic] = useState(board.isPublic);
+  const [publicPermission, setPublicPermission] = useState<'view' | 'edit'>(board.publicPermission ?? 'view');
   const [isUpdating, setIsUpdating] = useState(false);
+  const [collaborators, setCollaborators] = useState(board.collaborators);
+  const { updateBoard } = useBoardStore();
+
+  useEffect(() => {
+    setIsPublic(board.isPublic);
+    setPublicPermission(board.publicPermission ?? 'view');
+    setCollaborators(board.collaborators);
+  }, [board]);
 
   const boardUrl = `${window.location.origin}/board/${board.id}`;
 
@@ -30,12 +40,52 @@ export function ShareModal({ isOpen, onClose, board, currentUser }: ShareModalPr
     setIsUpdating(true);
     try {
       const { boardService } = await import('@/services');
-      await boardService.updateBoard(board.id, { isPublic: newValue });
+      const updatedBoard = await boardService.updateBoard(board.id, { isPublic: newValue });
+      updateBoard(board.id, { isPublic: updatedBoard.isPublic });
       setIsPublic(newValue);
     } catch (err) {
       console.error('Failed to update board visibility:', err);
       // Revert on error
       setIsPublic(!newValue);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handlePublicPermissionChange = async (permission: 'view' | 'edit') => {
+    const previous = publicPermission;
+    setPublicPermission(permission);
+    setIsUpdating(true);
+    try {
+      const { boardService } = await import('@/services');
+      const updatedBoard = await boardService.updateBoard(board.id, {
+        publicPermission: permission,
+        isPublic: true,
+      });
+      updateBoard(board.id, {
+        publicPermission: updatedBoard.publicPermission ?? permission,
+        isPublic: updatedBoard.isPublic,
+      });
+    } catch (err) {
+      console.error('Failed to update public link permission:', err);
+      setPublicPermission(previous);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handlePermissionChange = async (userId: string, permission: Permission) => {
+    const previous = collaborators;
+    setIsUpdating(true);
+    setCollaborators((current) => current.map((collaborator) => (
+      collaborator.userId === userId ? { ...collaborator, permission } : collaborator
+    )));
+    try {
+      const { boardService } = await import('@/services');
+      await boardService.updateMemberPermission(board.id, userId, permission);
+    } catch (err) {
+      console.error('Failed to update collaborator permission:', err);
+      setCollaborators(previous);
     } finally {
       setIsUpdating(false);
     }
@@ -101,6 +151,25 @@ export function ShareModal({ isOpen, onClose, board, currentUser }: ShareModalPr
                   />
                 </div>
 
+                {isPublic && (
+                  <div className="flex items-center justify-between gap-4 p-4 border border-gray-100 rounded-xl">
+                    <div>
+                      <p className="font-medium text-gray-800">Link permission</p>
+                      <p className="text-xs text-gray-500">Choose what people with this link can do</p>
+                    </div>
+                    <PermissionSelect
+                      permission={publicPermission}
+                      onChange={(permission) => {
+                        if (permission === 'view' || permission === 'edit') {
+                          void handlePublicPermissionChange(permission);
+                        }
+                      }}
+                      disabled={isUpdating}
+                      allowAdmin={false}
+                    />
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Board link
@@ -140,7 +209,7 @@ export function ShareModal({ isOpen, onClose, board, currentUser }: ShareModalPr
                         </span>
                       </div>
                     )}
-                    {board.collaborators.map((collab) => (
+                    {collaborators.map((collab) => (
                       <div
                         key={collab.userId}
                         className="flex items-center justify-between p-3 bg-gray-50 rounded-xl"
@@ -154,8 +223,8 @@ export function ShareModal({ isOpen, onClose, board, currentUser }: ShareModalPr
                         </div>
                         <PermissionSelect
                           permission={collab.permission}
-                          onChange={() => {}}
-                          disabled
+                          onChange={(permission) => handlePermissionChange(collab.userId, permission)}
+                          disabled={isUpdating}
                         />
                       </div>
                     ))}
@@ -203,8 +272,8 @@ export function InviteModal({ isOpen, onClose, boardId }: InviteModalProps) {
         setEmail('');
         onClose();
       }, 2000);
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to invite user. Please try again.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to invite user. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -296,12 +365,14 @@ interface PermissionSelectProps {
   permission: Permission;
   onChange: (permission: Permission) => void;
   disabled?: boolean;
+  allowAdmin?: boolean;
 }
 
 export function PermissionSelect({
   permission,
   onChange,
   disabled,
+  allowAdmin = true,
 }: PermissionSelectProps) {
   return (
     <select
@@ -312,7 +383,7 @@ export function PermissionSelect({
     >
       <option value="view">Can view</option>
       <option value="edit">Can edit</option>
-      <option value="admin">Admin</option>
+      {allowAdmin && <option value="admin">Admin</option>}
     </select>
   );
 }

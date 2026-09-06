@@ -1,4 +1,5 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000/api/v1';
+let refreshPromise: Promise<boolean> | null = null;
 
 class ApiService {
   private baseUrl: string;
@@ -24,7 +25,7 @@ class ApiService {
     endpoint: string,
     options: RequestInit = {},
   ): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+    let response = await fetch(`${this.baseUrl}${endpoint}`, {
       ...options,
       headers: {
         ...this.getHeaders(),
@@ -32,8 +33,37 @@ class ApiService {
       },
     });
 
-    const data = await response.json().catch(() => null);
+    if (response.status === 401 && !endpoint.startsWith('/auth/')) {
+      const { useAuthStore } = await import('@/stores/authStore');
+      const refreshToken = useAuthStore.getState().refreshToken;
+      if (refreshToken) {
+        if (refreshPromise === null) {
+          refreshPromise = import('./authService').then(async ({ authService }) => {
+            try {
+              const result = await authService.refreshToken(refreshToken);
+              useAuthStore.getState().login(result.user, result.accessToken, result.refreshToken);
+              return true;
+            } catch {
+              useAuthStore.getState().logout();
+              return false;
+            } finally {
+              refreshPromise = null;
+            }
+          });
+        }
+        if (await refreshPromise) {
+          response = await fetch(`${this.baseUrl}${endpoint}`, {
+            ...options,
+            headers: {
+              ...this.getHeaders(),
+              ...options.headers,
+            },
+          });
+        }
+      }
+    }
 
+    const data = await response.json().catch(() => null);
     if (!response.ok) {
       const message = data?.error ?? `Request failed with status ${response.status}`;
       throw new Error(message);

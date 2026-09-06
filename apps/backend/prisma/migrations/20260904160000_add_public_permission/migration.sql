@@ -1,0 +1,1 @@
+ALTER TABLE "Board" ADD COLUMN "publicPermission" TEXT NOT NULL DEFAULT 'view';

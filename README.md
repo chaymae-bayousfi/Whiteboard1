@@ -119,7 +119,7 @@ docker exec -it whiteboard-backend npx prisma db seed
 ```
 
 Access:
-- Frontend: d
+- Frontend: http://localhost:5173
 - Backend API: http://localhost:4000/api/v1
 - MinIO Console: http://localhost:9001 (minioadmin / minioadmin)
 - Yjs WebSocket: ws://localhost:4001/yjs
@@ -260,6 +260,44 @@ npm run dev
 ```
 
 The frontend starts on http://localhost:5173
+
+## Production container deployment
+
+The production stack is defined in `docker/docker-compose.production.yml`. It builds the frontend as static files served by nginx and builds the backend as a Node.js production image. nginx proxies `/api/` to Fastify and upgrades `/yjs/` connections for WebSocket traffic.
+
+Create a deployment environment file with strong, unique values for `DATABASE_URL`, `REDIS_URL`, `CLIENT_ORIGIN`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `MINIO_ACCESS_KEY`, and `MINIO_SECRET_KEY`. Then run:
+
+```bash
+docker compose --env-file .env.production -f docker/docker-compose.production.yml build
+docker compose --env-file .env.production -f docker/docker-compose.production.yml up -d
+```
+
+Run `npx prisma migrate deploy` from `apps/backend` in the release job against the production `DATABASE_URL` before starting the new backend image. The production runtime image intentionally contains runtime dependencies only.
+
+Put the stack behind a managed HTTPS load balancer or reverse proxy. Configure `VITE_YJS_WS_URL` as `wss://your-domain.example/yjs` and `CLIENT_ORIGIN` as the HTTPS frontend origin. A public hostname, TLS certificate, and hosting account are external deployment prerequisites and are not included in this repository.
+
+## Testing
+
+Run the available checks from the repository root:
+
+```bash
+npm run typecheck
+npm run lint
+npm test
+npm run build
+```
+
+The backend tests cover permission resolution and Yjs convergence. Live PostgreSQL, Redis, MinIO, browser interaction, reconnection, and multi-user latency tests require the services to be running.
+
+The current automated suite does not claim to replace live integration testing. Run the application stack and follow the two-browser checklist in the audit handoff before calling collaboration verified.
+
+## Sharing and permissions
+
+Owners can share boards by email with `view`, `edit`, or `admin` permission. Public board links are anonymous read-only links. Private boards require authentication and membership. Permission checks are applied in REST access checks and at the WebSocket Yjs update boundary.
+
+## Synchronization design
+
+See [DESIGN_CHOICES.md](DESIGN_CHOICES.md) for the Yjs document model, Awareness presence, Redis propagation, persistence, reconnection behavior, and known limitations. A sequence diagram for a collaborative edit should be added to the final project presentation materials; no deployed URL or demo video is included in this repository.
 
 ## Database Schema
 

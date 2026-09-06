@@ -27,6 +27,7 @@ model Board {
   title        String
   description  String?
   isPublic     Boolean       @default(false)
+  publicPermission String     @default("view")
   ownerId      String
   owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   members      BoardMember[]

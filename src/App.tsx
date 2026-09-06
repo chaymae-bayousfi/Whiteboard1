@@ -1,5 +1,4 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { useEffect } from 'react';
 import {
   LandingPage,
   LoginPage,
@@ -10,7 +9,7 @@ import {
 } from '@/pages';
 import { DashboardLayout } from '@/layouts';
 import { ToastContainer } from '@/components/ui';
-import { useAuthStore, useCollaborationStore } from '@/stores';
+import { useAuthStore } from '@/stores';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore();
@@ -23,13 +22,6 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
 }
 
 function App() {
-  const { setConnected, setConnectionStatus } = useCollaborationStore();
-
-  useEffect(() => {
-    setConnectionStatus('connected');
-    setConnected(true);
-  }, []);
-
   return (
     <BrowserRouter>
       <Routes>
@@ -63,9 +55,7 @@ function App() {
         <Route
           path="/board/:id"
           element={
-            <PrivateRoute>
-              <BoardEditorPage />
-            </PrivateRoute>
+            <BoardEditorPage />
           }
         />
         <Route path="/404" element={<NotFoundPage />} />

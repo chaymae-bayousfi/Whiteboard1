@@ -34,7 +34,7 @@ export function RegisterPage() {
   const onSubmit = async (data: RegisterFormData) => {
     setIsLoading(true);
     try {
-      const { confirmPassword: _confirm, terms: _terms, ...credentials } = data;
+      const credentials = { email: data.email, name: data.name, password: data.password };
       const response = await authService.register(credentials);
       login(response.user, response.accessToken, response.refreshToken);
       addToast({ type: 'success', title: 'Account created!', message: 'Welcome to CollabBoard!' });

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Stage, Layer, Rect, Ellipse, Line, Arrow, Text, Transformer } from 'react-konva';
 import type Konva from 'konva';
@@ -25,13 +25,15 @@ import {
 import { BoardLayout } from '@/layouts';
 import { Tooltip, ColorPicker } from '@/components/ui';
 import { CollabCursors } from '@/components/collaboration';
-import { useBoardStore, useCanvasStore, useToolStore, useAuthStore, useCollaborationStore } from '@/stores';
+import { useBoardStore, useCanvasStore, useToolStore, useAuthStore, useCollaborationStore, useUIStore } from '@/stores';
 import { boardService, exportService } from '@/services';
 import { useCollaboration } from '@/hooks';
 import { generateId, cn } from '@/utils';
 import { STROKE_COLORS, FILL_COLORS, STROKE_WIDTHS, FONT_SIZES } from '@/constants';
 import { CANVAS_CONFIG } from '@/constants/canvas';
 import type { CanvasElement, ToolType, Point } from '@/types';
+
+type CanvasPointerEvent = Konva.KonvaEventObject<MouseEvent | TouchEvent>;
 
 const TOOLS: { id: ToolType; icon: typeof MousePointer; label: string; shortcut: string }[] = [
   { id: 'select', icon: MousePointer, label: 'Select', shortcut: 'V' },
@@ -64,6 +66,7 @@ export function BoardEditorPage() {
   const { user, accessToken } = useAuthStore();
   const { setConnected, setConnectionStatus, setOnlineUsers, setCursors, cursors } = useCollaborationStore();
   const { currentBoard, setCurrentBoard, updateRecentBoards } = useBoardStore();
+  const { addToast } = useUIStore();
   const {
     elements,
     addElement,
@@ -119,14 +122,19 @@ export function BoardEditorPage() {
 
   const stageRef = useRef<Konva.Stage>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const stageHostRef = useRef<HTMLDivElement>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
   const shapeRefs = useRef<Map<string, Konva.Node>>(new Map());
-  const [stageSize, setStageSize] = useState({ width: 800, height: 600 });
+  const guestIdRef = useRef(`guest-${crypto.randomUUID()}`);
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
 
   const canUndo = historyIndex >= 0;
   const canRedo = historyIndex < history.length - 1;
+  const canEdit = currentBoard?.permission === 'owner'
+    || currentBoard?.permission === 'admin'
+    || currentBoard?.permission === 'edit';
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     loadBoard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -139,7 +147,11 @@ export function BoardEditorPage() {
   const collab = useCollaboration({
     boardId: id ?? '',
     token: accessToken ?? '',
-    user: { id: user?.id ?? '', name: user?.name ?? 'Anonymous', email: user?.email ?? '' },
+    user: {
+      id: user?.id ?? guestIdRef.current,
+      name: user?.name ?? 'Guest viewer',
+      email: user?.email ?? '',
+    },
     onElementsChange: handleCollabElementsChange,
   });
 
@@ -183,6 +195,34 @@ export function BoardEditorPage() {
     collab.reorderElements(els);
   }, [collab]);
 
+  const syncCurrentElements = useCallback(() => {
+    collab.setElements(useCanvasStore.getState().elements);
+  }, [collab]);
+
+  const undoAndSync = useCallback(() => {
+    if (!canEdit) return;
+    undo();
+    syncCurrentElements();
+  }, [canEdit, syncCurrentElements, undo]);
+
+  const redoAndSync = useCallback(() => {
+    if (!canEdit) return;
+    redo();
+    syncCurrentElements();
+  }, [canEdit, redo, syncCurrentElements]);
+
+  const pasteAndSync = useCallback(() => {
+    if (!canEdit) return;
+    pasteClipboard();
+    syncCurrentElements();
+  }, [canEdit, pasteClipboard, syncCurrentElements]);
+
+  const duplicateAndSync = useCallback(() => {
+    if (!canEdit) return;
+    duplicateSelected();
+    syncCurrentElements();
+  }, [canEdit, duplicateSelected, syncCurrentElements]);
+
   // Attach transformer to selected nodes
   useEffect(() => {
     const transformer = transformerRef.current;
@@ -202,28 +242,35 @@ export function BoardEditorPage() {
   }, [selectedIds, activeTool, elements]);
 
   useEffect(() => {
-    const handleResize = () => {
-      if (containerRef.current) {
-        const width = containerRef.current.offsetWidth;
-        const height = containerRef.current.offsetHeight;
+    const container = stageHostRef.current;
+    if (!container) return;
 
-        // Only update if we have valid dimensions
-        if (width > 0 && height > 0) {
-          setStageSize({ width, height });
+    const updateStageSize = () => {
+      const { width, height } = container.getBoundingClientRect();
+      if (width > 0 && height > 0) {
+        const nextSize = { width: Math.floor(width), height: Math.floor(height) };
+        setStageSize(nextSize);
+        const stage = stageRef.current;
+        if (stage && (stage.width() !== nextSize.width || stage.height() !== nextSize.height)) {
+          stage.size(nextSize);
+          stage.batchDraw();
         }
       }
     };
 
-    // Call resize after a short delay to ensure layout is ready
-    const timer = setTimeout(handleResize, 100);
-    handleResize();
+    const observer = new ResizeObserver(updateStageSize);
+    observer.observe(container);
+    if (containerRef.current && containerRef.current !== container) {
+      observer.observe(containerRef.current);
+    }
+    updateStageSize();
+    const frame = requestAnimationFrame(updateStageSize);
 
-    window.addEventListener('resize', handleResize);
     return () => {
-      clearTimeout(timer);
-      window.removeEventListener('resize', handleResize);
+      cancelAnimationFrame(frame);
+      observer.disconnect();
     };
-  }, []);
+  }, [isLoading]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -234,8 +281,8 @@ export function BoardEditorPage() {
 
       if (isCtrl && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
+        if (e.shiftKey) redoAndSync();
+        else undoAndSync();
         return;
       }
 
@@ -249,13 +296,13 @@ export function BoardEditorPage() {
 
       if (isCtrl && (e.key === 'v' || e.key === 'V')) {
         e.preventDefault();
-        pasteClipboard();
+        pasteAndSync();
         return;
       }
 
       if (isCtrl && (e.key === 'd' || e.key === 'D')) {
         e.preventDefault();
-        duplicateSelected();
+        duplicateAndSync();
         return;
       }
 
@@ -314,13 +361,15 @@ export function BoardEditorPage() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setActiveTool, selectedIds, deleteElements, clearSelection, undo, redo, editingText, elements, copySelected, pasteClipboard, duplicateSelected, selectElements, bringToFront, bringForward, sendToBack, sendBackward, removeFromYjs, reorderYjs]);
+  }, [setActiveTool, selectedIds, deleteElements, clearSelection, undoAndSync, redoAndSync, editingText, elements, copySelected, pasteAndSync, duplicateAndSync, selectElements, bringToFront, bringForward, sendToBack, sendBackward, removeFromYjs, reorderYjs, canEdit]);
 
   const loadBoard = async () => {
     if (!id) return;
     setIsLoading(true);
     try {
-      const board = await boardService.getBoard(id);
+      const board = accessToken
+        ? await boardService.getBoard(id)
+        : await boardService.getPublicBoard(id);
       setCurrentBoard(board);
       updateRecentBoards(board);
     } catch {
@@ -340,14 +389,16 @@ export function BoardEditorPage() {
     return transform.point(pos);
   };
 
-  const handleMouseDown = (e: any) => {
+  const handleMouseDown = (e: CanvasPointerEvent) => {
+    if (!canEdit) return;
+    const evt = e.evt as MouseEvent & { spaceKey?: boolean };
     const clickedOnEmpty = e.target === stageRef.current;
     const point = getCanvasPoint();
 
     // Manual panning with pan tool or space/middle-click
-    if (activeTool === 'pan' || e.evt.button === 1 || (e.evt.button === 0 && e.evt.spaceKey)) {
+    if (activeTool === 'pan' || evt.button === 1 || (evt.button === 0 && evt.spaceKey)) {
       setIsPanning(true);
-      setPanStart({ x: e.evt.clientX, y: e.evt.clientY, panX, panY });
+      setPanStart({ x: evt.clientX, y: evt.clientY, panX, panY });
       return;
     }
 
@@ -355,13 +406,13 @@ export function BoardEditorPage() {
       if (clickedOnEmpty) {
         setMarqueeStart(point);
         setMarquee({ x: point.x, y: point.y, width: 0, height: 0 });
-        if (!e.evt.shiftKey) clearSelection();
+        if (!evt.shiftKey) clearSelection();
       } else {
         const shape = e.target;
         const shapeId = shape.id();
         if (!shapeId) return;
 
-        if (e.evt.shiftKey) {
+        if (evt.shiftKey) {
           if (selectedIds.includes(shapeId)) {
             selectElements(selectedIds.filter((sid) => sid !== shapeId));
           } else {
@@ -417,7 +468,8 @@ export function BoardEditorPage() {
     }
   };
 
-  const handleMouseMove = (e: any) => {
+  const handleMouseMove = (e: CanvasPointerEvent) => {
+    const evt = e.evt as MouseEvent;
     const stage = stageRef.current;
     const pos = stage?.getPointerPosition();
     if (pos && zoom > 0) {
@@ -426,8 +478,8 @@ export function BoardEditorPage() {
 
     // Manual panning
     if (isPanning && panStart) {
-      const dx = e.evt.clientX - panStart.x;
-      const dy = e.evt.clientY - panStart.y;
+      const dx = evt.clientX - panStart.x;
+      const dy = evt.clientY - panStart.y;
       setPan(panStart.panX + dx, panStart.panY + dy);
       return;
     }
@@ -626,7 +678,7 @@ export function BoardEditorPage() {
     setCurrentPoints([]);
   };
 
-  const handleWheel = (e: any) => {
+  const handleWheel = (e: Konva.KonvaEventObject<WheelEvent>) => {
     e.evt.preventDefault();
     const stage = stageRef.current;
     if (!stage) return;
@@ -656,8 +708,27 @@ export function BoardEditorPage() {
     setPan(stageSize.width / 2 - 400, stageSize.height / 2 - 300);
   };
 
+  const handleCreateSnapshot = async () => {
+    if (!id || !canEdit) return;
+    try {
+      const snapshot = await boardService.saveSnapshot(id, JSON.stringify({
+        version: '1.0',
+        exportedAt: new Date().toISOString(),
+        elements,
+      }));
+      addToast({ type: 'success', title: 'Snapshot created', message: `Saved ${snapshot.size} bytes to MinIO.` });
+    } catch (error) {
+      addToast({
+        type: 'error',
+        title: 'Snapshot failed',
+        message: error instanceof Error ? error.message : 'Unable to save snapshot.',
+      });
+    }
+  };
+
   // Apply color change to selected elements
   const applyStrokeColor = (color: string) => {
+    if (!canEdit) return;
     setStrokeColor(color);
     if (selectedIds.length > 0) {
       updateElements(selectedIds, { stroke: color });
@@ -669,6 +740,7 @@ export function BoardEditorPage() {
   };
 
   const applyFillColor = (color: string) => {
+    if (!canEdit) return;
     setFillColor(color);
     if (selectedIds.length > 0) {
       updateElements(selectedIds, { fill: color });
@@ -680,6 +752,7 @@ export function BoardEditorPage() {
   };
 
   const applyStrokeWidth = (width: number) => {
+    if (!canEdit) return;
     setStrokeWidth(width);
     if (selectedIds.length > 0) {
       updateElements(selectedIds, { strokeWidth: width });
@@ -691,6 +764,7 @@ export function BoardEditorPage() {
   };
 
   const applyFontSize = (size: number) => {
+    if (!canEdit) return;
     setFontSize(size);
     if (selectedIds.length > 0) {
       updateElements(selectedIds, { fontSize: size });
@@ -703,24 +777,28 @@ export function BoardEditorPage() {
 
   // Z-order actions
   const handleBringToFront = () => {
+    if (!canEdit) return;
     bringToFront(selectedIds);
     reorderYjs(useCanvasStore.getState().elements);
   };
   const handleSendToBack = () => {
+    if (!canEdit) return;
     sendToBack(selectedIds);
     reorderYjs(useCanvasStore.getState().elements);
   };
   const handleBringForward = () => {
+    if (!canEdit) return;
     bringForward(selectedIds);
     reorderYjs(useCanvasStore.getState().elements);
   };
   const handleSendBackward = () => {
+    if (!canEdit) return;
     sendBackward(selectedIds);
     reorderYjs(useCanvasStore.getState().elements);
   };
 
   const commitTextEditing = () => {
-    if (!editingText) return;
+    if (!editingText || !canEdit) return;
     const el = elements.find((e) => e.id === editingText.id);
     if (el) {
       if (editingText.text.trim() === '') {
@@ -735,6 +813,7 @@ export function BoardEditorPage() {
   };
 
   const handleTransformEnd = () => {
+    if (!canEdit) return;
     const transformer = transformerRef.current;
     if (!transformer) return;
     const nodes = transformer.nodes();
@@ -775,14 +854,14 @@ export function BoardEditorPage() {
   };
 
   const renderElement = (el: CanvasElement) => {
-    const isDraggable = activeTool === 'select' && !el.locked && !editingText;
+    const isDraggable = canEdit && activeTool === 'select' && !el.locked && !editingText;
 
-    const onDragEnd = (e: any) => {
+    const onDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
       updateElement(el.id, { x: e.target.x(), y: e.target.y() });
       syncToYjs({ ...el, x: e.target.x(), y: e.target.y() });
     };
 
-    const onElementClick = (e: any) => {
+    const onElementClick = (e: CanvasPointerEvent) => {
       if (activeTool === 'select') {
         const shapeId = e.target.id();
         if (e.evt.shiftKey) {
@@ -794,7 +873,7 @@ export function BoardEditorPage() {
         } else if (!selectedIds.includes(shapeId)) {
           selectElements([shapeId]);
         }
-      } else if (activeTool === 'eraser') {
+      } else if (canEdit && activeTool === 'eraser') {
         deleteElements([el.id]);
         removeFromYjs(el.id);
       }
@@ -1055,7 +1134,7 @@ export function BoardEditorPage() {
           <div className="space-y-2">
             <button
               className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors"
-              onClick={() => duplicateSelected()}
+              onClick={duplicateAndSync}
             >
               <Copy className="w-4 h-4" /> Duplicate
             </button>
@@ -1131,19 +1210,21 @@ export function BoardEditorPage() {
       bottomBar={bottomBar}
       canUndo={canUndo}
       canRedo={canRedo}
-      onUndo={undo}
-      onRedo={redo}
+      onUndo={undoAndSync}
+      onRedo={redoAndSync}
       onExportPNG={() => exportService.exportToPNG(elements, `${currentBoard?.title ?? 'board'}.png`)}
       onExportJSON={() => exportService.exportToJSON(elements, `${currentBoard?.title ?? 'board'}.json`)}
+      onCreateSnapshot={handleCreateSnapshot}
       onImportJSON={(imported) => {
         imported.forEach((el) => { addElement(el); syncToYjs(el); });
       }}
     >
-      <div ref={containerRef} className="w-full h-full bg-gray-50 relative overflow-hidden">
-        <Stage
-          ref={stageRef}
-          width={stageSize.width}
-          height={stageSize.height}
+      <div ref={containerRef} className="w-full h-full min-w-0 min-h-0 bg-gray-50 relative overflow-hidden">
+        <div ref={stageHostRef} className="absolute inset-0 w-full h-full min-w-0 min-h-0">
+          {stageSize.width > 0 && stageSize.height > 0 && <Stage
+            ref={stageRef}
+            width={stageSize.width}
+            height={stageSize.height}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
@@ -1155,10 +1236,9 @@ export function BoardEditorPage() {
           onTouchMove={handleMouseMove}
           onTouchEnd={handleMouseUp}
           onWheel={handleWheel}
-          style={{ cursor: isPanning ? 'grabbing' : TOOL_CURSORS[activeTool] }}
-        >
+            style={{ cursor: isPanning ? 'grabbing' : TOOL_CURSORS[activeTool], display: 'block' }}
+          >
           <Layer x={panX} y={panY} scaleX={zoom} scaleY={zoom}>
-            <Rect x={-10000} y={-10000} width={20000} height={20000} fill="#f9fafb" listening={false} />
             {elements.map(renderElement)}
 
             {isDrawing && previewRect && activeTool === 'rectangle' && (
@@ -1255,7 +1335,8 @@ export function BoardEditorPage() {
               }}
             />
           </Layer>
-        </Stage>
+          </Stage>}
+        </div>
         <div className="absolute inset-0 pointer-events-none z-20">
           <CollabCursors
             cursors={cursors.filter((cursor) => cursor.userId !== user?.id)}
